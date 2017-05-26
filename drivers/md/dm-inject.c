@@ -14,9 +14,17 @@
 
 #define DM_MSG_PREFIX "inject"
 
+// Supported filesystems
+enum fs {
+	FS_UNKNOWN,
+	FS_EXT4,
+	FS_F2FS
+};
+
 // info about the target
 struct inject_c {
 	struct dm_dev *dev;
+	struct block_device *src_bdev;
 	sector_t start;
 	unsigned int num_corrupt;
 	sector_t *corrupt_sector;
@@ -64,9 +72,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	// read sectors to corrupt
 	if (argc > 2) {
 		ic->num_corrupt = argc - 2;
-		ic->corrupt_sector = (sector_t*) kmalloc(ic->num_corrupt * sizeof(sector_t), GFP_KERNEL);
-		//ic->corrupt_sector = NULL;
-		//ic->corrupt_block = (block_t*) kmalloc(ic->num_corrupt * sizeof(block_t), GFP_KERNEL);
+		//ic->corrupt_sector = (sector_t*) kmalloc(ic->num_corrupt * sizeof(sector_t), GFP_KERNEL);
+		ic->corrupt_sector = NULL;
+		ic->corrupt_block = (block_t*) kmalloc(ic->num_corrupt * sizeof(block_t), GFP_KERNEL);
 		DMDEBUG("%s num %d size %d", __func__, ic->num_corrupt, sizeof(block_t));
 	} else {
 		ic->num_corrupt = 0;
@@ -79,10 +87,10 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			ti->error = "Invalid sector to corrupt";
 			goto bad;
 		}
-		ic->corrupt_sector[i] = tmp;
-		DMDEBUG("%s corrupt sector %d", __func__, ic->corrupt_sector[i]);
-		//ic->corrupt_block[i] = tmp;
-		//DMDEBUG("%s corrupt block %d", __func__, ic->corrupt_block[i]);
+		//ic->corrupt_sector[i] = tmp;
+		//DMDEBUG("%s corrupt sector %d", __func__, ic->corrupt_sector[i]);
+		ic->corrupt_block[i] = tmp;
+		DMDEBUG("%s corrupt block %d", __func__, ic->corrupt_block[i]);
 	}
 
 	// do this last since it impacts ref count
@@ -92,6 +100,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad;
 	}
 
+	ic->src_bdev = NULL;
 	ti->num_discard_bios = 1;
 	ti->private = ic;
 	return 0;
@@ -136,9 +145,9 @@ static int check_corrupt_sector(struct inject_c *ic, sector_t s)
 static int check_corrupt_block(struct inject_c *ic, block_t blk)
 {
 	int i;
-	DMDEBUG("%s %d", __func__, blk);
+	//DMDEBUG("%s %d", __func__, blk);
 	if(ic->corrupt_block == NULL) {
-		DMDEBUG("%s NULL", __func__);
+		//DMDEBUG("%s NULL", __func__);
 		return 0;
 	}
 	for (i=0;i<ic->num_corrupt;i++) {
@@ -149,10 +158,53 @@ static int check_corrupt_block(struct inject_c *ic, block_t blk)
 	return 0;
 }
 
+static int check_f2fs_blkaddr(struct f2fs_super_block *super, block_t blk)
+{
+	if(!super)
+		return 0;
+	DMDEBUG("%s blk %d", __func__, blk);
+	if(blk == super->cp_blkaddr) {
+		DMDEBUG("%s cp blk %d", __func__, blk);
+		return 1;
+	} else if(blk == super->sit_blkaddr) {
+		DMDEBUG("%s sit blk %d", __func__, blk);
+		return 1;
+	} else if (blk == super->nat_blkaddr) {
+		DMDEBUG("%s blk blk %d", __func__, blk);
+		return 1;
+	}
+	DMDEBUG("%s cp %d sit %d nat %d", __func__, super->cp_blkaddr
+		, super->sit_blkaddr, super->nat_blkaddr);
+	return 0;
+}
+
+static enum fs check_fs_type(struct file_system_type *type)
+{
+	if(type == NULL) {
+		DMDEBUG("%s unknown fs", __func__);
+		return FS_UNKNOWN;
+	}
+	else if(strcmp(type->name, "ext4") == 0) {
+		//DMDEBUG("%s ext4", __func__);
+		return FS_EXT4;
+	}
+	else if(strcmp(type->name, "f2fs") == 0) {
+		//DMDEBUG("%s f2fs", __func__);
+		return FS_F2FS;
+	}
+	else {
+		DMDEBUG("%s unknown fs", __func__);
+		return FS_UNKNOWN;
+	}
+}
+
 // Mapper
 static int inject_map(struct dm_target *ti, struct bio *bio)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
+	struct super_block *sb;
+	struct f2fs_sb_info *sbi;
+	struct f2fs_super_block *raw_super;
 	int ret = DM_MAPIO_SUBMITTED;
 
 	DMDEBUG("%s bio op %d sector %d blk %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector));
@@ -163,6 +215,9 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 			return -EIO;
 		}
 		//linear map
+		if(bio->bi_bdev != NULL) {
+			ic->src_bdev = bio->bi_bdev;
+		}
 		bio->bi_bdev = ic->dev->bdev;
 		if(bio_sectors(bio)) {
 			bio->bi_iter.bi_sector += ic->start;
@@ -170,8 +225,8 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 			DMDEBUG("%s bio mapped R sector %d start %d begin %d", __func__, bio->bi_iter.bi_sector, ic->start, ti->begin);
 
 			//corrupt sectors/blocks
-			if(check_corrupt_sector(ic, bio->bi_iter.bi_sector)) {	
-			//if(check_corrupt_block(ic, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector))) {	
+			//if(check_corrupt_sector(ic, bio->bi_iter.bi_sector)) {	
+			if(check_corrupt_block(ic, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector))) {	
 				DMDEBUG("%s corrupting sector %d", __func__, bio->bi_iter.bi_sector);
 				return -EIO;
 				//return zero
@@ -197,23 +252,57 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	if(ret==DM_MAPIO_SUBMITTED)
 		bio_endio(bio);
 	//dump_stack();
+
+	//try to get superblock and fs-specific info
+	if(ic->src_bdev) {
+		sb = ic->src_bdev->bd_super;
+	}
+	if(sb && sb->s_type && sb->s_type->name) {
+		DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
+		if(check_fs_type(sb->s_type) == FS_F2FS) {
+			sbi = F2FS_SB(sb);
+			raw_super = F2FS_RAW_SUPER(sbi);
+			DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
+			check_f2fs_blkaddr(raw_super, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector));
+		}
+	}
 	return ret;
 }
 
 static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 {
+	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct super_block *sb;
 	struct gendisk *gd;
+	struct f2fs_sb_info *sbi;
+	struct f2fs_super_block *raw_super;
 
 	//try to get superblock
-	sb = bio->bi_bdev->bd_super;
-	gd = bio->bi_bdev->bd_disk;
+	//sb = bio->bi_bdev->bd_super;
+	//gd = bio->bi_bdev->bd_disk;
+	if(ic->src_bdev) {
+		sb = ic->src_bdev->bd_super;
+		gd = ic->src_bdev->bd_disk;
+	}
 	//DMDEBUG("%s bdev %p gendisk %p sb %p", __func__, bio->bi_bdev, gd, sb);
+	/*
 	if(gd && gd->disk_name)
 		DMDEBUG("%s gendisk %s", __func__, gd->disk_name);
-	if(sb && sb->s_type && sb->s_type->name)
+	if(sb)
+		DMDEBUG("%s sb %p magic %lx", __func__, sb, sb->s_magic);
+	*/
+	/*
+	if(sb && sb->s_type && sb->s_type->name) {
 		DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
-	DMDEBUG("%s bio sector %d", __func__, bio->bi_iter.bi_sector);
+		if(check_fs_type(sb->s_type) == FS_F2FS) {
+			sbi = F2FS_SB(sb);
+			raw_super = F2FS_RAW_SUPER(sbi);
+			DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
+			check_f2fs_blkaddr(raw_super, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector));
+		}
+	}
+	DMDEBUG("%s bio sector %d sb %p", __func__, bio->bi_iter.bi_sector, sb);
+	*/
 	return 0;
 }
 
