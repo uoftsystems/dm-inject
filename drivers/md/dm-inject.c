@@ -158,23 +158,133 @@ static int check_corrupt_block(struct inject_c *ic, block_t blk)
 	return 0;
 }
 
-static int check_f2fs_blkaddr(struct f2fs_super_block *super, block_t blk)
+//from f2fs/node.c get_node_info
+//without reading the disk
+
+/*
+static int f2fs_get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 {
-	if(!super)
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
+	struct curseg_info *curseg = CURSEG_I(sbi, CURSEG_HOT_DATA);
+	struct f2fs_journal *journal = curseg->journal;
+	struct f2fs_nat_entry ne;
+	struct nat_entry *e;
+	int i;
+
+	ni->nid = nid;
+
+	//chck nat cache
+	down_read(&nm_i->nat_tree_lock);
+	//e = __lookup_nat_cache(nm_i, nid);
+	if (e) {
+		ni->ino = nat_get_ino(e);
+		ni->blk_addr = nat_get_blkaddr(e)
+	}
+	
+	//check current segment summary
+	down_read(&curseg->journal_rwsem);
+	//i = lookup_journal_in_cursum(journal, NAT_JOURNAL, nid, 0);
+	if (i >= 0) {
+		ne = nat_in_journal(journal, i);
+		node_info_from_raw_nat(ni, &ne);
+	}
+	up_read(&curseg->journal_rwsem);
+	if (i >= 0)
+		goto found;
+
+found:
+	up_read(&nm_i->nat_tree_lock);
+}*/
+
+static int check_f2fs_blkaddr(struct page *page, struct f2fs_sb_info *sbi, block_t blk, int op)
+{
+	if(!sbi)
 		return 0;
-	DMDEBUG("%s blk %d", __func__, blk);
-	if(blk == super->cp_blkaddr) {
+
+	struct f2fs_super_block *super = F2FS_RAW_SUPER(sbi);
+	u32 segment0_blkaddr = le32_to_cpu(super->segment0_blkaddr);
+	u32 cp_blkaddr = le32_to_cpu(super->cp_blkaddr);
+	u32 sit_blkaddr = le32_to_cpu(super->sit_blkaddr);
+	u32 nat_blkaddr = le32_to_cpu(super->nat_blkaddr);
+	u32 ssa_blkaddr = le32_to_cpu(super->ssa_blkaddr);
+	u32 main_blkaddr = le32_to_cpu(super->main_blkaddr);
+	u32 segment_count_ckpt = le32_to_cpu(super->segment_count_ckpt);
+	u32 segment_count_sit = le32_to_cpu(super->segment_count_sit);
+	u32 segment_count_nat = le32_to_cpu(super->segment_count_nat);
+	u32 segment_count_ssa = le32_to_cpu(super->segment_count_ssa);
+	u32 segment_count_main = le32_to_cpu(super->segment_count_main);
+	u32 segment_count = le32_to_cpu(super->segment_count);
+	u32 log_blocks_per_seg = le32_to_cpu(super->log_blocks_per_seg);
+	/*u64 main_end_blkaddr = main_blkaddr +
+				(segment_count_main << log_blocks_per_seg);
+	u64 seg_end_blkaddr = segment0_blkaddr +
+				(segment_count << log_blocks_per_seg);*/
+
+	if(cp_blkaddr <= blk && 
+		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
 		DMDEBUG("%s cp blk %d", __func__, blk);
 		return 1;
-	} else if(blk == super->sit_blkaddr) {
+	} else if(sit_blkaddr <= blk &&
+		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
 		DMDEBUG("%s sit blk %d", __func__, blk);
 		return 1;
-	} else if (blk == super->nat_blkaddr) {
-		DMDEBUG("%s blk blk %d", __func__, blk);
+	} else if (nat_blkaddr <= blk &&
+		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
+		DMDEBUG("%s nat blk %d", __func__, blk);
 		return 1;
+	} else if (ssa_blkaddr <= blk &&
+		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
+		DMDEBUG("%s ssa blk %d", __func__, blk);
+		return 1;
+	} else if (main_blkaddr <= blk &&
+		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
+
+		//this is Relative (number within main area), not Logical
+		//only to be used to index into SSA block
+		unsigned int segno = GET_SEGNO(sbi, blk);
+		unsigned int segoff = (blk - main_blkaddr) % ENTRIES_IN_SUM;
+		struct seg_entry *seg = get_seg_entry(sbi, segno);
+
+		DMDEBUG("%s blk %d seg %u %p", __func__, blk, segno, seg);
+		//check segment is NODE or DATA type
+		//maybe from summary info GET_SUM_TYPE
+		//then use IS_INODE to check if is inode
+		if(seg && op==REQ_OP_WRITE) {
+			unsigned char type = seg->type;
+								/*type = IS_DATASEG(seg->type) ?
+								SUM_TYPE_DATA : SUM_TYPE_NODE;
+								these types don't work with CURSEG*/
+			struct curseg_info *curseg = CURSEG_I(sbi, type);
+			struct f2fs_summary_block *sum = curseg->sum_blk;
+			struct f2fs_summary *sum_entry = &sum->entries[segoff];
+			DMDEBUG("%s sum nid %d type %d", __func__, sum_entry->nid, GET_SUM_TYPE(&sum->footer));
+			/*struct page *sum_page = find_get_page(META_MAPPING(sbi),
+									GET_SUM_BLOCK(sbi, segno));
+			struct f2fs_summary_block *sum;
+			struct f2fs_summary *sum_entry;
+			f2fs_put_page(sum_page, 0);
+
+			if(sum_page) {
+				sum = page_address(sum_page);
+				sum_entry = &sum->entries[segoff];
+				DMDEBUG("%s sum nid %d type %d", __func__, sum_entry->nid, GET_SUM_TYPE(&sum->footer));
+			}*/
+
+			if (IS_NODESEG(type) && IS_INODE(page)) {
+				DMDEBUG("%s me thinks it's an inode", __func__);
+			}
+			
+			DMDEBUG("%s main %d blk %d sum %p", __func__, type, blk, sum);
+			//might be able to lookup inode via ino_of_node or nid_of_node
+		} else {
+			DMDEBUG("%s main blk %d", __func__, blk);
+		}
+		return 1;
+	} else {
+		DMDEBUG("%s unknown blk %d", __func__, blk);
 	}
-	DMDEBUG("%s cp %d sit %d nat %d", __func__, super->cp_blkaddr
-		, super->sit_blkaddr, super->nat_blkaddr);
+	/*DMDEBUG("%s cp %d sit %d nat %d", __func__, super->cp_blkaddr
+		, super->sit_blkaddr, super->nat_blkaddr);*/
 	return 0;
 }
 
@@ -207,7 +317,8 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	struct f2fs_super_block *raw_super;
 	int ret = DM_MAPIO_SUBMITTED;
 
-	DMDEBUG("%s bio op %d sector %d blk %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector));
+	DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+
 	switch(bio_op(bio)) {
 	case REQ_OP_READ:
 		if(bio->bi_opf & REQ_RAHEAD) {
@@ -249,23 +360,28 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	default:
 		return -EIO;
 	}
-	if(ret==DM_MAPIO_SUBMITTED)
-		bio_endio(bio);
-	//dump_stack();
 
 	//try to get superblock and fs-specific info
 	if(ic->src_bdev) {
 		sb = ic->src_bdev->bd_super;
 	}
 	if(sb && sb->s_type && sb->s_type->name) {
-		DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
+		//DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
 		if(check_fs_type(sb->s_type) == FS_F2FS) {
 			sbi = F2FS_SB(sb);
 			raw_super = F2FS_RAW_SUPER(sbi);
-			DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
-			check_f2fs_blkaddr(raw_super, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector));
+			//DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
+			DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
+				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
+				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);
+			check_f2fs_blkaddr(bio->bi_io_vec->bv_page, sbi, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio_op(bio));
 		}
 	}
+
+
+	if(ret==DM_MAPIO_SUBMITTED)
+		bio_endio(bio);
+	//dump_stack();
 	return ret;
 }
 
