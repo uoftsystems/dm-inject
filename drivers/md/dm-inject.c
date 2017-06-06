@@ -11,6 +11,7 @@
 #include <linux/f2fs_fs.h>
 #include "../../fs/f2fs/f2fs.h"
 #include "../../fs/f2fs/segment.h"
+#include "../../fs/f2fs/node.h"
 
 #define DM_MSG_PREFIX "inject"
 
@@ -196,6 +197,66 @@ found:
 	up_read(&nm_i->nat_tree_lock);
 }*/
 
+//generic function to read pages
+//from f2fs_target_device
+struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
+				block_t blk_addr, struct bio *bio)
+{
+	struct block_device *bdev = sbi->sb->s_bdev;
+	int i;
+
+	for (i = 0; i < sbi->s_ndevs; i++) {
+		if (FDEV(i).start_blk <= blk_addr &&
+					FDEV(i).end_blk >= blk_addr) {
+			blk_addr -= FDEV(i).start_blk;
+			bdev = FDEV(i).bdev;
+			break;
+		}
+	}
+	if (bio) {
+		bio->bi_bdev = bdev;
+		bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(blk_addr);
+	}
+	return bdev;
+}
+//from f2fs_submit_page_bio
+int f2fs_inject_submit_page_bio(struct f2fs_sb_info *sbi, struct page *page, block_t blk_addr, int op)
+{
+	struct bio *bio;
+	//__bio_alloc / f2fs_bio_alloc
+	bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
+	f2fs_target_device(sbi, blk_addr, bio);
+	bio->bi_end_io = NULL;
+	bio->bi_private = NULL;
+	
+	//bio_add_page
+	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
+		bio_put(bio);
+		return -EFAULT;
+	}
+	bio->bi_opf = op;
+
+	//submit_bio_wait
+	submit_bio_wait(bio);
+	return 0;
+}
+//issue bios to read pages
+static struct page *f2fs_inject_read_page(struct f2fs_sb_info *sbi, block_t blk_addr)
+{
+	struct page *page;
+	page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
+	if(!page)
+		return NULL;
+	if(f2fs_inject_submit_page_bio(sbi, page, blk_addr, REQ_OP_READ)){
+		//free page
+		__free_page(page);
+		return NULL;
+	}
+	return page;
+}
+
+
+
 static int check_f2fs_blkaddr(struct page *page, struct f2fs_sb_info *sbi, block_t blk, int op)
 {
 	if(!sbi)
@@ -270,12 +331,18 @@ static int check_f2fs_blkaddr(struct page *page, struct f2fs_sb_info *sbi, block
 				DMDEBUG("%s sum nid %d type %d", __func__, sum_entry->nid, GET_SUM_TYPE(&sum->footer));
 			}*/
 
-			if (IS_NODESEG(type) && IS_INODE(page)) {
+			if (IS_NODESEG(type) && IS_INODE(page) && nid_of_node(page) >= F2FS_RESERVED_NODE_NUM) {
 				DMDEBUG("%s me thinks it's an inode", __func__);
 			}
 			
 			DMDEBUG("%s main %d blk %d sum %p", __func__, type, blk, sum);
 			//might be able to lookup inode via ino_of_node or nid_of_node
+		} else if(seg && op==REQ_OP_READ) {
+			unsigned char type = seg->type;
+			DMDEBUG("%s main %s blk %d", __func__, IS_NODESEG(type)?"NODE":"DATA", blk);
+			if (IS_NODESEG(type) && IS_INODE(page) && nid_of_node(page) >= F2FS_RESERVED_NODE_NUM) {
+				DMDEBUG("%s me thinks it's an inode nid %d ino %d", __func__, nid_of_node(page), ino_of_node(page));
+			}
 		} else {
 			DMDEBUG("%s main blk %d", __func__, blk);
 		}
@@ -396,10 +463,10 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 	//try to get superblock
 	//sb = bio->bi_bdev->bd_super;
 	//gd = bio->bi_bdev->bd_disk;
-	if(ic->src_bdev) {
+	/*if(ic->src_bdev) {
 		sb = ic->src_bdev->bd_super;
 		gd = ic->src_bdev->bd_disk;
-	}
+	}*/
 	//DMDEBUG("%s bdev %p gendisk %p sb %p", __func__, bio->bi_bdev, gd, sb);
 	/*
 	if(gd && gd->disk_name)
@@ -419,6 +486,22 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 	}
 	DMDEBUG("%s bio sector %d sb %p", __func__, bio->bi_iter.bi_sector, sb);
 	*/
+	if(ic->src_bdev) {
+		sb = ic->src_bdev->bd_super;
+	}
+
+	if(bio_op(bio)==REQ_OP_READ && sb && sb->s_type && sb->s_type->name) {
+		//DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
+		if(check_fs_type(sb->s_type) == FS_F2FS) {
+			sbi = F2FS_SB(sb);
+			//DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
+			DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+			DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
+				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
+				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);
+			check_f2fs_blkaddr(bio->bi_io_vec->bv_page, sbi, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector-8), bio_op(bio));
+		}
+	}
 	return 0;
 }
 
