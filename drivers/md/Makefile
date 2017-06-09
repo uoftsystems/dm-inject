@@ -25,6 +25,7 @@ dm-zoned-y	+= dm-zoned-target.o dm-zoned-metadata.o dm-zoned-reclaim.o
 linear-y	+= md-linear.o
 multipath-y	+= md-multipath.o
 faulty-y	+= md-faulty.o
+dm-inject-y += dm-inject-base.o dm-inject-f2fs.o
 
 # Note: link order is important.  All raid personalities
 # and must come before md.o, as they each initialise 
