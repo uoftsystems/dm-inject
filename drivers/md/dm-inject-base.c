@@ -58,19 +58,47 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	
 	for (i=0;i<ic->num_corrupt;i++) {
-		if (sscanf(dm_shift_arg(&as), "%llu%c", &tmp, &dummy) != 1) {
-			ti->error = "Invalid sector to corrupt";
-			goto bad;
+		char *cur_arg = dm_shift_arg(&as);
+		enum corrupt_type new_type = INJECT_BLOCK;
+		if (strcmp(cur_arg, "cp") == 0) {
+			DMDEBUG("%s corrupt checkpoint", __func__);
+			continue;
+		} else if (strcmp(cur_arg, "nat") == 0) {
+			DMDEBUG("%s corrupt nat", __func__);
+			continue;
+		} else {
+			if (strchr(cur_arg,'s') == cur_arg) {
+				cur_arg++;
+				new_type = INJECT_SECTOR;
+			} else if (strchr(cur_arg,'b') == cur_arg) {
+				cur_arg++;
+				new_type = INJECT_BLOCK;
+			} else if (strchr(cur_arg,'i') == cur_arg) {
+				cur_arg++;
+				new_type = INJECT_INODE;
+			}
+			if (sscanf(cur_arg, "%llu%*c", &tmp) != 1) {
+				ti->error = "Invalid sector to corrupt";
+				goto bad;
+			}
 		}
 		//ic->corrupt_sector[i] = tmp;
 		//DMDEBUG("%s corrupt sector %d", __func__, ic->corrupt_sector[i]);
 		ic->corrupt_block[i] = tmp;
 		//add to list
 		struct inject_rec *new_block = kzalloc(sizeof(*new_block), GFP_NOIO);
-		new_block->type = INJECT_BLOCK;
-		new_block->block_num = tmp;
+		new_block->type = new_type;
+		if (new_block->type == INJECT_SECTOR) {
+			new_block->sector_num = tmp;
+			DMDEBUG("%s corrupt sector %d", __func__, new_block->sector_num);
+		} else if (new_block->type == INJECT_BLOCK) {
+			new_block->block_num = tmp;
+			DMDEBUG("%s corrupt block %d", __func__, new_block->block_num);
+		} else if (new_block->type == INJECT_INODE) {
+			new_block->inode_num = tmp;
+			DMDEBUG("%s corrupt inode %d", __func__, new_block->inode_num);
+		}
 		list_add_tail(&new_block->list, &ic->inject_list);
-		DMDEBUG("%s corrupt block %d", __func__, ic->corrupt_block[i]);
 	}
 
 	// do this last since it impacts ref count
@@ -288,64 +316,35 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	struct f2fs_super_block *raw_super;
 	int ret = DM_MAPIO_SUBMITTED;
 
-	DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 
-	switch(bio_op(bio)) {
-	case REQ_OP_READ:
-		if(bio->bi_opf & REQ_RAHEAD) {
-			DMDEBUG("%s fail RAHEAD", __func__);
-			return -EIO;
-		}
-		//linear map
-		if(bio->bi_bdev != NULL) {
-			ic->src_bdev = bio->bi_bdev;
-		}
-		bio->bi_bdev = ic->dev->bdev;
-		if(bio_sectors(bio)) {
-			bio->bi_iter.bi_sector += ic->start;
-			bio->bi_iter.bi_sector -= ti->begin;
-			DMDEBUG("%s bio mapped R sector %d start %d begin %d", __func__, bio->bi_iter.bi_sector, ic->start, ti->begin);
-
-			//corrupt sectors/blocks
-			//if(check_corrupt_sector(ic, bio->bi_iter.bi_sector)) {	
-			/*if(check_corrupt_block(ic, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector))) {	
-				DMDEBUG("%s corrupting sector %d", __func__, bio->bi_iter.bi_sector);
-				return -EIO;
-				//return zero
-				//zero_fill_bio(bio);
-				//ret = DM_MAPIO_SUBMITTED;
-			}*/
-		}
-		ret = DM_MAPIO_REMAPPED;
-		break;
-	case REQ_OP_WRITE:
-		//drop writes for now
-		bio->bi_bdev = ic->dev->bdev;
-		if(bio_sectors(bio)) {
-			bio->bi_iter.bi_sector += ic->start;
-			bio->bi_iter.bi_sector -= ti->begin;
-			DMDEBUG("%s bio mapped W sector %d start %d begin %d", __func__, bio->bi_iter.bi_sector, ic->start, ti->begin);
-		}
-		ret = DM_MAPIO_REMAPPED;
-		break;
-	default:
+	//drop read-ahead?
+	if(bio->bi_opf & REQ_RAHEAD) {
+		DMDEBUG("%s fail RAHEAD", __func__);
 		return -EIO;
 	}
+	//assign src_bdev to grab superblock if fs is mounted
+	if(bio->bi_bdev != NULL) {
+		ic->src_bdev = bio->bi_bdev;
+	}
 
-	//try to get superblock and fs-specific info
+	//linear mapping
+	bio->bi_bdev = ic->dev->bdev;
+	if(bio_sectors(bio)) {
+		bio->bi_iter.bi_sector += ic->start;
+		bio->bi_iter.bi_sector -= ti->begin;
+	}
+	ret = DM_MAPIO_REMAPPED;
+
+	//get sb and check if we need to corrupt
 	sb = get_bdev_sb(ic);
 
-	if(sb && sb->s_type && sb->s_type->name) {
-		//DMDEBUG("%s fs type %s", __func__, sb->s_type->name);
-		if(check_fs_type(sb) == FS_F2FS) {
-			sbi = F2FS_SB(sb);
-			raw_super = F2FS_RAW_SUPER(sbi);
-			//DMDEBUG("%s f2fs sbi %p raw_sb %p", __func__, sbi, raw_super);
-			DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
-				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
-				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);
-			check_f2fs_blkaddr(bio->bi_io_vec->bv_page, sbi, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio_op(bio));
-		}
+	//intercept and inject F2FS write requests
+	//data travelling from from memory to block device
+	if(bio_op(bio)==REQ_OP_WRITE && IS_F2FS(sb)) {
+		DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+		if(f2fs_corrupt_block_to_dev(ic, bio))
+			return -EIO;
 	}
 
 	if(ret==DM_MAPIO_SUBMITTED)
@@ -360,15 +359,20 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 	struct super_block *sb;
 	struct f2fs_sb_info *sbi;
 
+	//the sector count was advanced during the bio
+	sector_t sec = bio->bi_iter.bi_sector-8;
+
 	sb = get_bdev_sb(ic);
 
+	//intercept and inject F2FS read requests
+	//data from block device travelling to memory
 	if(bio_op(bio)==REQ_OP_READ && IS_F2FS(sb)) {
 		sbi = F2FS_SB(sb);
 		ic->f2fs_sbi = sbi;
-		DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
-		DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
+		//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
+		/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 			bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
-			bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);
+			bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
 		if(f2fs_corrupt_block_from_dev(ic, bio))
 			return -EIO;
 	}

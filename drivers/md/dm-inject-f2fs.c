@@ -74,29 +74,51 @@ bool f2fs_corrupt_block(struct inject_c *ic, block_t blk)
 	}
 	return false;
 }
+
+bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec)
+{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == INJECT_SECTOR && tmp->sector_num == sec) {
+			DMDEBUG("%s %d", __func__, sec);
+			return true;
+		}
+	}
+	return false;
+}
+
 // check inode against input to see if corruption should take place
 // doesn't check for bio direction or anything
 bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino)
 {
-	return false;
-}
-
-//associated with map function in DM injector module
-bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
-{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == INJECT_INODE && tmp->inode_num == ino) {
+			DMDEBUG("%s %d", __func__, ino);
+			return true;
+		}
+	}
 	return false;
 }
 
 //associated with end_io function in DM injector module
-bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
+bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev)
 {
 	struct f2fs_sb_info *sbi = ic->f2fs_sbi;
 	struct f2fs_super_block *super = F2FS_RAW_SUPER(sbi);
 	struct page *page = bio->bi_io_vec->bv_page;
-	//sector count was advanced since we're already at end_io
-	block_t blk = SECTOR_TO_BLOCK((bio->bi_iter.bi_sector-8));
+	sector_t sec = bio->bi_iter.bi_sector;
+	block_t	blk = SECTOR_TO_BLOCK((bio->bi_iter.bi_sector));
+	//sector count was advanced if we're already at end_io
+	//(read path)
+	if(from_dev) {
+		sec -= 8;
+		blk -= 1;
+	}
 
-	if(f2fs_corrupt_block(ic, blk))
+	if(f2fs_corrupt_sector(ic, sec))
+		return true;
+	else if(f2fs_corrupt_block(ic, blk))
 		return true;
 
 	//from super.c: sanity_check_area_boundary
@@ -114,19 +136,19 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 
 	if(cp_blkaddr <= blk && 
 		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
-		DMDEBUG("%s cp blk %d", __func__, blk);
+		//DMDEBUG("%s CP blk %d", __func__, blk);
 		return false;
 	} else if(sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
-		DMDEBUG("%s sit blk %d", __func__, blk);
+		//DMDEBUG("%s SIT blk %d", __func__, blk);
 		return false;
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
-		DMDEBUG("%s nat blk %d", __func__, blk);
+		//DMDEBUG("%s NAT blk %d", __func__, blk);
 		return false;
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
-		DMDEBUG("%s ssa blk %d", __func__, blk);
+		//DMDEBUG("%s SSA blk %d", __func__, blk);
 		return false;
 	} else if (main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
@@ -136,15 +158,30 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 		unsigned int segoff = (blk - main_blkaddr) % ENTRIES_IN_SUM;
 		struct seg_entry *seg = get_seg_entry(sbi, segno);
 		unsigned char type = seg->type;
+		nid_t num = nid_of_node(page);
 		if(IS_NODESEG(type) && IS_INODE(page)
 			&& nid_of_node(page) >= F2FS_RESERVED_NODE_NUM) {
-			DMDEBUG("%s INODE %s blk %d seg %u", __func__, RW(bio_op(bio)), blk, segno);
+			//DMDEBUG("%s INODE %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			if(f2fs_corrupt_inode(ic, num))
+				return true;
 		} else if (IS_NODESEG(type)) {
-			DMDEBUG("%s NODE %s blk %d seg %u", __func__, RW(bio_op(bio)), blk, segno);
+			//DMDEBUG("%s NODE %s num %d  blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
 		} else {
-			DMDEBUG("%s DATA %s blk %d seg %u", __func__, RW(bio_op(bio)), blk, segno);
+			//DMDEBUG("%s DATA %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
 		}
 		return false;
 	}
 	return false;
+}
+
+//associated with map function in DM injector module
+bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
+{
+	return __f2fs_corrupt_block_dev(ic, bio, 0);
+}
+
+//associated with end_io function in DM injector module
+bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
+{
+	return __f2fs_corrupt_block_dev(ic, bio, 1);
 }

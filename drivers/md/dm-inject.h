@@ -66,35 +66,6 @@ static inline struct super_block *get_bdev_sb(struct inject_c *ic)
 	return NULL;
 }
 
-static inline enum fs check_fs_type(struct super_block *sb)
-{
-	struct file_system_type *type;
-	int magic;
-	if(sb == NULL) {
-		DMDEBUG("%s unknown fs", __func__);
-		return FS_UNKNOWN;
-	}
-	type = sb->s_type;
-	magic = sb->s_magic;
-	if(type == NULL) {
-		DMDEBUG("%s unknown fs", __func__);
-		return FS_UNKNOWN;
-	}
-	//else if(strcmp(type->name, "ext4") == 0) {
-	else if(magic == EXT4_SUPER_MAGIC) {
-		//DMDEBUG("%s ext4", __func__);
-		return FS_EXT4;
-	}
-	//else if(strcmp(type->name, "f2fs") == 0) {
-	else if(magic == F2FS_SUPER_MAGIC) {
-		//DMDEBUG("%s f2fs", __func__);
-		return FS_F2FS;
-	}
-	else {
-		DMDEBUG("%s unknown fs", __func__);
-		return FS_UNKNOWN;
-	}
-}
 #define IS_F2FS(sb) ((sb) && ((sb)->s_magic == F2FS_SUPER_MAGIC))
 #define IS_EXT4(sb) ((sb) && ((sb)->s_magic == EXT4_SUPER_MAGIC))
 
