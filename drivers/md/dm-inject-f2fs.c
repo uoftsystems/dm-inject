@@ -28,12 +28,18 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 	return bdev;
 }
 //from f2fs_submit_page_bio
-static int f2fs_inject_submit_page_bio(struct f2fs_sb_info *sbi, struct page *page, block_t blk_addr, int op)
+static int f2fs_inject_submit_page_bio(struct inject_c *ic, struct page *page, block_t blk_addr, int op)
 {
 	struct bio *bio;
 	//__bio_alloc / f2fs_bio_alloc
 	bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
-	f2fs_target_device(sbi, blk_addr, bio);
+	//TODO: this is not the right bdev
+	//f2fs is mounted on TOP of the mapper,
+	//we need to go deeper to lower level
+	//ic->dev->bdev
+	//f2fs_target_device(sbi, blk_addr, bio);
+	bio->bi_bdev = ic->dev->bdev;
+	bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(blk_addr);
 	bio->bi_end_io = NULL;
 	bio->bi_private = NULL;
 	
@@ -42,20 +48,25 @@ static int f2fs_inject_submit_page_bio(struct f2fs_sb_info *sbi, struct page *pa
 		bio_put(bio);
 		return -EFAULT;
 	}
-	bio->bi_opf = op;
+	//bio->bi_opf = op;
+	bio_set_op_attrs(bio, op, REQ_META|REQ_PRIO|REQ_SYNC);
 
 	//submit_bio_wait
-	submit_bio_wait(bio);
+	DMDEBUG("%s blk_addr %d page %lx bdev %lx sec %d", __func__, blk_addr, page, bio->bi_bdev, bio->bi_iter.bi_sector);
+	//submit_bio_wait(bio);
+	submit_bio(bio);
+	bio_put(bio);
 	return 0;
 }
 //issue bios to read pages
-static struct page *f2fs_inject_read_page(struct f2fs_sb_info *sbi, block_t blk_addr)
+static struct page *f2fs_inject_read_page(struct inject_c *ic, block_t blk_addr)
 {
 	struct page *page;
 	page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
+	DMDEBUG("%s alloc_page %lx", __func__, page);
 	if(!page)
 		return NULL;
-	if(f2fs_inject_submit_page_bio(sbi, page, blk_addr, REQ_OP_READ)){
+	if(f2fs_inject_submit_page_bio(ic, page, blk_addr, REQ_OP_READ)){
 		//free page
 		__free_page(page);
 		return NULL;
@@ -94,6 +105,20 @@ bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino)
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == INJECT_INODE && tmp->inode_num == ino) {
+			DMDEBUG("%s %d", __func__, ino);
+			return true;
+		}
+	}
+	return false;
+}
+
+// check inode against input to see if data corruption should take place
+// doesn't check for bio direction or anything
+bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino)
+{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == INJECT_DATA && tmp->inode_num == ino) {
 			DMDEBUG("%s %d", __func__, ino);
 			return true;
 		}
@@ -160,14 +185,50 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 		unsigned char type = seg->type;
 		nid_t num = nid_of_node(page);
 		if(IS_NODESEG(type) && IS_INODE(page)
-			&& nid_of_node(page) >= F2FS_RESERVED_NODE_NUM) {
-			//DMDEBUG("%s INODE %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			&& num >= F2FS_RESERVED_NODE_NUM) {
+			DMDEBUG("%s INODE %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
 			if(f2fs_corrupt_inode(ic, num))
 				return true;
 		} else if (IS_NODESEG(type)) {
-			//DMDEBUG("%s NODE %s num %d  blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			DMDEBUG("%s NODE %s num %d  blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
 		} else {
-			//DMDEBUG("%s DATA %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			DMDEBUG("%s DATA %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			//from f2fs-tools get_sum_block
+			struct f2fs_checkpoint *cp = F2FS_CKPT(sbi);
+			block_t ssa_blk = GET_SUM_BLOCK(sbi, segno);
+			struct curseg_info *curseg;
+			int seg_type;
+			unsigned short blkoff;
+			struct f2fs_summary *sum;
+			DMDEBUG("%s looking for SSA block %d", __func__, ssa_blk);
+			//look at open segments and see if we have SSA (in memory)
+			for(seg_type = 0; seg_type < NR_CURSEG_DATA_TYPE; seg_type++) {
+				//might change depending on number of concurrently open logs,
+				//but pretty hard-coded in f2fs
+				if(segno == le32_to_cpu(cp->cur_data_segno[seg_type])) {
+					curseg = CURSEG_I(sbi, seg_type);
+					DMDEBUG("%s found ckpt seg %d is open data curseg %p IS_CURSEG %d type %d", __func__, segno, curseg, IS_CURSEG(sbi, segno), GET_SUM_TYPE(&curseg->sum_blk->footer));
+					blkoff = GET_BLKOFF_FROM_SEG0(sbi, blk);
+					sum = &curseg->sum_blk->entries[blkoff];
+					DMDEBUG("%s sum %p nid %d ofs %d", __func__, sum, sum->nid, sum->ofs_in_node);
+					if(f2fs_corrupt_data(ic, sum->nid))
+						return true;
+					break;
+				}
+			}
+			//from do_garbage_collect
+			//struct page *sum_page;
+			//struct f2fs_summary_block *sum;
+			//see if it's already in cache
+			////sum_page = find_get_page(META_MAPPING(sbi), GET_SUM_BLOCK(sbi, segno));
+			//sum_page = f2fs_inject_read_page(ic, GET_SUM_BLOCK(sbi,segno));
+			////sum_page = get_sum_page(sbi, segno);
+			/*DMDEBUG("%s sum page %lx", __func__, sum_page);
+			if(sum_page){
+				sum = page_address(sum_page);
+				DMDEBUG("%s found cached sum block %lx page %lx", __func__, sum, sum_page);
+				f2fs_put_page(sum_page,0);
+			}*/
 		}
 		return false;
 	}

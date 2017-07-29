@@ -32,7 +32,9 @@ enum fs {
 enum corrupt_type {
 	INJECT_SECTOR,
 	INJECT_BLOCK,
-	INJECT_INODE
+	INJECT_INODE,
+	INJECT_NODE,
+	INJECT_DATA
 };
 
 struct inject_rec {
@@ -48,8 +50,8 @@ struct inject_rec {
 // info about the target
 struct inject_c {
 	//context for device mapper
-	struct dm_dev *dev;
-	struct block_device *src_bdev;
+	struct dm_dev *dev; //underlying device
+	struct block_device *src_bdev; //source of bio requests
 	sector_t start;
 	//info related to corruption
 	unsigned int num_corrupt;

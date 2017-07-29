@@ -77,3 +77,7 @@ endif
 ifeq ($(CONFIG_DM_VERITY_FEC),y)
 dm-verity-objs			+= dm-verity-fec.o
 endif
+
+CFLAGS_dm-inject.o += -DDEBUG -Og
+CFLAGS_dm-inject-base.o += -DDEBUG -Og
+CFLAGS_dm-inject-f2fs.o += -DDEBUG -Og

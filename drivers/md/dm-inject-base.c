@@ -15,6 +15,11 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	char dummy;
 	int i, ret = 0;
 
+	//try submit_bio
+	volatile struct bio *my_bio;
+	volatile struct page *my_bio_page;
+	int my_ret;
+
 	as.argc = argc;
 	as.argv = argv;
 
@@ -76,6 +81,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			} else if (strchr(cur_arg,'i') == cur_arg) {
 				cur_arg++;
 				new_type = INJECT_INODE;
+			} else if (strchr(cur_arg,'d') == cur_arg) {
+				cur_arg++;
+				new_type = INJECT_DATA;
 			}
 			if (sscanf(cur_arg, "%llu%*c", &tmp) != 1) {
 				ti->error = "Invalid sector to corrupt";
@@ -97,6 +105,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		} else if (new_block->type == INJECT_INODE) {
 			new_block->inode_num = tmp;
 			DMDEBUG("%s corrupt inode %d", __func__, new_block->inode_num);
+		} else if (new_block->type == INJECT_DATA) {
+			new_block->inode_num = tmp;
+			DMDEBUG("%s corrupt data of inode %d", __func__, new_block->inode_num);
 		}
 		list_add_tail(&new_block->list, &ic->inject_list);
 	}
@@ -111,6 +122,22 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ic->src_bdev = NULL;
 	ti->num_discard_bios = 1;
 	ti->private = ic;
+	//try submit_bio
+	my_bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
+	my_bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
+	my_bio->bi_bdev = ic->dev->bdev;
+	my_bio->bi_iter.bi_sector = 0;
+	my_bio->bi_end_io = NULL;
+	my_bio->bi_private = NULL;
+
+	if(bio_add_page(my_bio, my_bio_page, PAGE_SIZE, 0) < PAGE_SIZE) {
+		DMDEBUG("%s failed bio_add_page");
+	}
+
+	bio_set_op_attrs(my_bio, REQ_OP_READ, REQ_META|REQ_PRIO|REQ_SYNC);
+
+	my_ret = submit_bio_wait(my_bio);
+	DMDEBUG("%s my bio %p page %p ret %d", __func__, my_bio, my_bio_page, my_ret);
 	return 0;
 
 	bad:
