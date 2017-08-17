@@ -74,24 +74,26 @@ static struct page *f2fs_inject_read_page(struct inject_c *ic, block_t blk_addr)
 	return page;
 }
 
-bool f2fs_corrupt_block(struct inject_c *ic, block_t blk)
+bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_BLOCK && tmp->block_num == blk) {
-			DMDEBUG("%s %d", __func__, blk);
+		if(tmp->type == INJECT_BLOCK && tmp->block_num == blk
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s %d", __func__, RW(op), blk);
 			return true;
 		}
 	}
 	return false;
 }
 
-bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec)
+bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_SECTOR && tmp->sector_num == sec) {
-			DMDEBUG("%s %d", __func__, sec);
+		if(tmp->type == INJECT_SECTOR && tmp->sector_num == sec
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s %d", __func__, RW(op), sec);
 			return true;
 		}
 	}
@@ -100,26 +102,38 @@ bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec)
 
 // check inode against input to see if corruption should take place
 // doesn't check for bio direction or anything
-bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino)
+bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_INODE && tmp->inode_num == ino) {
-			DMDEBUG("%s %d", __func__, ino);
+		if(tmp->type == INJECT_INODE && tmp->inode_num == ino
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s %d", __func__, RW(op), ino);
 			return true;
 		}
 	}
 	return false;
 }
 
+void f2fs_print_seg_entries(struct f2fs_sb_info *sbi)
+{
+	struct sit_info *sit_i = SIT_I(sbi);
+	int i;
+	for (i=0;i<MAIN_SEGS(sbi);i++) {
+		struct seg_entry *s = &sit_i->sentries[i];
+		DMDEBUG("%s seg %d type %d vblks %d", __func__, i, s->type, s->valid_blocks);
+	}
+}
+
 // check inode against input to see if data corruption should take place
 // doesn't check for bio direction or anything
-bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino)
+bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_DATA && tmp->inode_num == ino) {
-			DMDEBUG("%s %d", __func__, ino);
+		if(tmp->type == INJECT_DATA && tmp->inode_num == ino
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s %d", __func__, RW(op), ino);
 			return true;
 		}
 	}
@@ -127,7 +141,7 @@ bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino)
 }
 
 //associated with end_io function in DM injector module
-bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev)
+bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
 {
 	struct f2fs_sb_info *sbi = ic->f2fs_sbi;
 	struct f2fs_super_block *super = F2FS_RAW_SUPER(sbi);
@@ -136,14 +150,14 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 	block_t	blk = SECTOR_TO_BLOCK((bio->bi_iter.bi_sector));
 	//sector count was advanced if we're already at end_io
 	//(read path)
-	if(from_dev) {
+	if(op == REQ_OP_READ) {
 		sec -= 8;
 		blk -= 1;
 	}
 
-	if(f2fs_corrupt_sector(ic, sec))
+	if(f2fs_corrupt_sector(ic, sec, op))
 		return true;
-	else if(f2fs_corrupt_block(ic, blk))
+	else if(f2fs_corrupt_block(ic, blk, op))
 		return true;
 
 	//from super.c: sanity_check_area_boundary
@@ -161,7 +175,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 
 	if(cp_blkaddr <= blk && 
 		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
-		//DMDEBUG("%s CP blk %d", __func__, blk);
+		DMDEBUG("%s CP blk %d compact %d", __func__, blk, is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
 		return false;
 	} else if(sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
@@ -184,11 +198,20 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 		struct seg_entry *seg = get_seg_entry(sbi, segno);
 		unsigned char type = seg->type;
 		nid_t num = nid_of_node(page);
+		DMDEBUG("%s seg %d type %d vblks %d", __func__, segno, seg->type, seg->valid_blocks);
+		if(is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG))
+			DMDEBUG("%s ckpt is compact", __func__);
 		if(IS_NODESEG(type) && IS_INODE(page)
 			&& num >= F2FS_RESERVED_NODE_NUM) {
-			DMDEBUG("%s INODE %s num %d blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
-			if(f2fs_corrupt_inode(ic, num))
+			struct f2fs_node *node = F2FS_NODE(page);
+			DMDEBUG("%s INODE %s num %d blk %d seg %u%s", __func__, RW(bio_op(bio)), num, blk, segno, (node->i.i_inline&F2FS_INLINE_DATA)? " inline data":"");
+			if(f2fs_corrupt_inode(ic, num, op))
 				return true;
+			if(node->i.i_inline & F2FS_INLINE_DATA //what about INLINE_DENTRY flag?
+				&& f2fs_corrupt_data(ic, num, op)) {
+				DMDEBUG("%s corrupting INODE with INLINE DATA", __func__);
+				return true;
+			}
 		} else if (IS_NODESEG(type)) {
 			DMDEBUG("%s NODE %s num %d  blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
 		} else {
@@ -211,7 +234,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 					blkoff = GET_BLKOFF_FROM_SEG0(sbi, blk);
 					sum = &curseg->sum_blk->entries[blkoff];
 					DMDEBUG("%s sum %p nid %d ofs %d", __func__, sum, sum->nid, sum->ofs_in_node);
-					if(f2fs_corrupt_data(ic, sum->nid))
+					if(f2fs_corrupt_data(ic, sum->nid, op))
 						return true;
 					break;
 				}
@@ -238,11 +261,11 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int from_dev
 //associated with map function in DM injector module
 bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
 {
-	return __f2fs_corrupt_block_dev(ic, bio, 0);
+	return __f2fs_corrupt_block_dev(ic, bio, REQ_OP_WRITE);
 }
 
 //associated with end_io function in DM injector module
 bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 {
-	return __f2fs_corrupt_block_dev(ic, bio, 1);
+	return __f2fs_corrupt_block_dev(ic, bio, REQ_OP_READ);
 }

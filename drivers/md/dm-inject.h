@@ -40,6 +40,7 @@ enum corrupt_type {
 struct inject_rec {
 	struct list_head list;
 	enum corrupt_type type;
+	int op;
 	union {
 		sector_t sector_num;
 		block_t block_num;

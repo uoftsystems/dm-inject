@@ -65,6 +65,14 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	for (i=0;i<ic->num_corrupt;i++) {
 		char *cur_arg = dm_shift_arg(&as);
 		enum corrupt_type new_type = INJECT_BLOCK;
+		int new_op = -1;
+		if (strchr(cur_arg,'R') == cur_arg) {
+			cur_arg++;
+			new_op = REQ_OP_READ;
+		} else if (strchr(cur_arg,'W') == cur_arg) {
+			cur_arg++;
+			new_op = REQ_OP_WRITE;
+		}
 		if (strcmp(cur_arg, "cp") == 0) {
 			DMDEBUG("%s corrupt checkpoint", __func__);
 			continue;
@@ -96,18 +104,19 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		//add to list
 		struct inject_rec *new_block = kzalloc(sizeof(*new_block), GFP_NOIO);
 		new_block->type = new_type;
+		new_block->op = new_op;
 		if (new_block->type == INJECT_SECTOR) {
 			new_block->sector_num = tmp;
-			DMDEBUG("%s corrupt sector %d", __func__, new_block->sector_num);
+			DMDEBUG("%s corrupt %s sector %d", __func__, RW(new_block->op), new_block->sector_num);
 		} else if (new_block->type == INJECT_BLOCK) {
 			new_block->block_num = tmp;
-			DMDEBUG("%s corrupt block %d", __func__, new_block->block_num);
+			DMDEBUG("%s corrupt %s block %d", __func__, RW(new_block->op), new_block->block_num);
 		} else if (new_block->type == INJECT_INODE) {
 			new_block->inode_num = tmp;
-			DMDEBUG("%s corrupt inode %d", __func__, new_block->inode_num);
+			DMDEBUG("%s corrupt %s inode %d", __func__, RW(new_block->op), new_block->inode_num);
 		} else if (new_block->type == INJECT_DATA) {
 			new_block->inode_num = tmp;
-			DMDEBUG("%s corrupt data of inode %d", __func__, new_block->inode_num);
+			DMDEBUG("%s corrupt %s data of inode %d", __func__, RW(new_block->op), new_block->inode_num);
 		}
 		list_add_tail(&new_block->list, &ic->inject_list);
 	}
