@@ -5,6 +5,46 @@
 
 #include "dm-inject.h"
 
+//(partially) init f2fs_sb_info
+//from fs/f2fs/super.c
+void init_sb_info(struct f2fs_sb_info *sbi)
+{
+	struct f2fs_super_block *raw_super = sbi->raw_super;
+	int i;
+
+	sbi->log_sectors_per_block =
+		le32_to_cpu(raw_super->log_sectors_per_block);
+	sbi->log_blocksize = le32_to_cpu(raw_super->log_blocksize);
+	sbi->blocksize = 1 << sbi->log_blocksize;
+	sbi->log_blocks_per_seg = le32_to_cpu(raw_super->log_blocks_per_seg);
+	sbi->blocks_per_seg = 1 << sbi->log_blocks_per_seg;
+	sbi->segs_per_sec = le32_to_cpu(raw_super->segs_per_sec);
+	sbi->secs_per_zone = le32_to_cpu(raw_super->secs_per_zone);
+	sbi->total_sections = le32_to_cpu(raw_super->section_count);
+	sbi->total_node_count =
+		(le32_to_cpu(raw_super->segment_count_nat) / 2)
+			* sbi->blocks_per_seg * NAT_ENTRY_PER_BLOCK;
+	sbi->root_ino_num = le32_to_cpu(raw_super->root_ino);
+	sbi->node_ino_num = le32_to_cpu(raw_super->node_ino);
+	sbi->meta_ino_num = le32_to_cpu(raw_super->meta_ino);
+	sbi->cur_victim_sec = NULL_SECNO;
+	//sbi->max_victim_search = DEF_MAX_VICTIM_SEARCH;
+
+	sbi->dir_level = DEF_DIR_LEVEL;
+	sbi->interval_time[CP_TIME] = DEF_CP_INTERVAL;
+	sbi->interval_time[REQ_TIME] = DEF_IDLE_INTERVAL;
+	clear_sbi_flag(sbi, SBI_NEED_FSCK);
+
+	for (i = 0; i < NR_COUNT_TYPE; i++)
+		atomic_set(&sbi->nr_pages[i], 0);
+
+	INIT_LIST_HEAD(&sbi->s_list);
+	mutex_init(&sbi->umount_mutex);
+	mutex_init(&sbi->wio_mutex[NODE]);
+	mutex_init(&sbi->wio_mutex[DATA]);
+	spin_lock_init(&sbi->cp_lock);
+}
+
 //generic function to read pages
 //from f2fs_target_device
 struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
@@ -100,6 +140,19 @@ bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 	return false;
 }
 
+bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
+{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == INJECT_CHECKPOINT
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s cp", __func__, RW(op));
+			return true;
+		}
+	}
+	return false;
+}
+
 // check inode against input to see if corruption should take place
 // doesn't check for bio direction or anything
 bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
@@ -175,21 +228,28 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
 
 	if(cp_blkaddr <= blk && 
 		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
-		DMDEBUG("%s CP blk %d compact %d", __func__, blk, is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
-		return false;
+		if(!ic->partial_sbi)
+			DMDEBUG("%s CP %s blk %d compact %d", __func__, RW(bio_op(bio)), blk, is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
+		else
+			DMDEBUG("%s CP %s blk %d", __func__, RW(bio_op(bio)), blk);
+		return f2fs_corrupt_checkpoint(ic, op);
 	} else if(sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
-		//DMDEBUG("%s SIT blk %d", __func__, blk);
+		DMDEBUG("%s SIT blk %d", __func__, blk);
 		return false;
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
-		//DMDEBUG("%s NAT blk %d", __func__, blk);
+		DMDEBUG("%s NAT blk %d", __func__, blk);
 		return false;
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
-		//DMDEBUG("%s SSA blk %d", __func__, blk);
+		DMDEBUG("%s SSA blk %d", __func__, blk);
 		return false;
-	} else if (main_blkaddr <= blk &&
+	} else if (ic->partial_sbi && main_blkaddr <= blk &&
+		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
+		DMDEBUG("%s MAIN blk %d", __func__, blk);
+		return false;
+	} else if (!ic->partial_sbi && main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
 		//this is relative segment number (number within main area)
 		//not logical, only to be used to index into SSA block

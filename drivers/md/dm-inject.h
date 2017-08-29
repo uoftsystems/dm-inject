@@ -32,6 +32,7 @@ enum fs {
 enum corrupt_type {
 	INJECT_SECTOR,
 	INJECT_BLOCK,
+	INJECT_CHECKPOINT,
 	INJECT_INODE,
 	INJECT_NODE,
 	INJECT_DATA
@@ -58,8 +59,15 @@ struct inject_c {
 	unsigned int num_corrupt;
 	sector_t *corrupt_sector;
 	block_t *corrupt_block;
+	bool inject_enable;
 	struct list_head inject_list;
 	struct f2fs_sb_info *f2fs_sbi;
+	//prior to full mount, we can already get partial sbi
+	//via reading block 0 directly in inject_ctr
+	//use it until the actual sb is setup properly
+	bool partial_sbi;
+	struct f2fs_sb_info f2fs_sbi_copy;
+	struct f2fs_super_block f2fs_sb_copy;
 };
 
 static inline struct super_block *get_bdev_sb(struct inject_c *ic)
@@ -74,4 +82,5 @@ static inline struct super_block *get_bdev_sb(struct inject_c *ic)
 
 bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio);
 bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio);
+void init_sb_info(struct f2fs_sb_info *sbi);
 #endif
