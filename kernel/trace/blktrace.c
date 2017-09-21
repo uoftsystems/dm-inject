@@ -105,7 +105,7 @@ static void trace_note(struct blk_trace *bt, pid_t pid, int action,
 	t = relay_reserve(bt->rchan, sizeof(*t) + len + cgid_len);
 	if (t) {
 		t->magic = BLK_IO_TRACE_MAGIC | BLK_IO_TRACE_VERSION;
-		t->time = ktime_to_ns(ktime_get());
+		t->time = trace_clock();
 record_it:
 		t->device = bt->dev;
 		t->action = action | (cgid ? __BLK_TN_CGROUP : 0);
@@ -141,14 +141,14 @@ static void trace_note_tsk(struct task_struct *tsk)
 
 static void trace_note_time(struct blk_trace *bt)
 {
-	struct timespec64 now;
+	u64 t;
 	unsigned long flags;
 	u32 words[2];
 
 	/* need to check user space to see if this breaks in y2038 or y2106 */
-	ktime_get_real_ts64(&now);
-	words[0] = (u32)now.tv_sec;
-	words[1] = now.tv_nsec;
+	t = trace_clock();
+	words[0] = (u32)(t>>32);
+	words[1] = (u32)t;
 
 	local_irq_save(flags);
 	trace_note(bt, 0, BLK_TN_TIMESTAMP, words, sizeof(words), NULL);
@@ -287,7 +287,7 @@ static void __blk_add_trace(struct blk_trace *bt, sector_t sector, int bytes,
 
 		t->magic = BLK_IO_TRACE_MAGIC | BLK_IO_TRACE_VERSION;
 		t->sequence = ++(*sequence);
-		t->time = ktime_to_ns(ktime_get());
+		t->time = trace_clock();
 record_it:
 		/*
 		 * These two are not needed in ftrace as they are in the
