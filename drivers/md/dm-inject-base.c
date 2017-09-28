@@ -10,6 +10,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
+	int tmp2 = -1;
 	struct dm_arg_set as;
 	const char *devname;
 	char dummy;
@@ -66,6 +67,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		char *cur_arg = dm_shift_arg(&as);
 		enum corrupt_type new_type = INJECT_BLOCK;
 		int new_op = -1;
+		// R or W denotes only corrupting on one type of access
 		if (strchr(cur_arg,'R') == cur_arg) {
 			cur_arg++;
 			new_op = REQ_OP_READ;
@@ -73,12 +75,14 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			cur_arg++;
 			new_op = REQ_OP_WRITE;
 		}
+		// checkpoint
 		if (strcmp(cur_arg, "cp") == 0) {
 			cur_arg += 2;
 			new_type = INJECT_CHECKPOINT;
 		} else if (strcmp(cur_arg, "nat") == 0) {
 			DMDEBUG("%s corrupt nat", __func__);
 			continue;
+		// sector/block/inode/data
 		} else {
 			if (strchr(cur_arg,'s') == cur_arg) {
 				cur_arg++;
@@ -93,7 +97,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 				cur_arg++;
 				new_type = INJECT_DATA;
 			}
-			if (sscanf(cur_arg, "%llu%*c", &tmp) != 1) {
+			// the number
+			if (sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) != 2
+				&& sscanf(cur_arg, "%llu%*c", &tmp) != 1) {
 				ti->error = "Invalid sector to corrupt";
 				goto bad;
 			}
@@ -119,7 +125,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			DMDEBUG("%s corrupt %s inode %d", __func__, RW(new_block->op), new_block->inode_num);
 		} else if (new_block->type == INJECT_DATA) {
 			new_block->inode_num = tmp;
-			DMDEBUG("%s corrupt %s data of inode %d", __func__, RW(new_block->op), new_block->inode_num);
+			new_block->offset = tmp2/PAGE_SIZE;
+			tmp2 = -1;
+			DMDEBUG("%s corrupt %s data of inode %d off %d", __func__, RW(new_block->op), new_block->inode_num, new_block->offset);
 		}
 		list_add_tail(&new_block->list, &ic->inject_list);
 	}

@@ -180,13 +180,14 @@ void f2fs_print_seg_entries(struct f2fs_sb_info *sbi)
 
 // check inode against input to see if data corruption should take place
 // doesn't check for bio direction or anything
-bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int op)
+bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int off, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == INJECT_DATA && tmp->inode_num == ino
-			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s %d", __func__, RW(op), ino);
+			&& (tmp->op < 0 || tmp->op == op)
+			&& (tmp->offset < 0 || tmp->offset == off)) {
+			DMDEBUG("%s %s %d %d", __func__, RW(op), ino, off);
 			return true;
 		}
 	}
@@ -268,7 +269,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
 			if(f2fs_corrupt_inode(ic, num, op))
 				return true;
 			if(node->i.i_inline & F2FS_INLINE_DATA //what about INLINE_DENTRY flag?
-				&& f2fs_corrupt_data(ic, num, op)) {
+				&& f2fs_corrupt_data(ic, num, -1, op)) {
 				DMDEBUG("%s corrupting INODE with INLINE DATA", __func__);
 				return true;
 			}
@@ -293,8 +294,8 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
 					DMDEBUG("%s found ckpt seg %d is open data curseg %p IS_CURSEG %d type %d", __func__, segno, curseg, IS_CURSEG(sbi, segno), GET_SUM_TYPE(&curseg->sum_blk->footer));
 					blkoff = GET_BLKOFF_FROM_SEG0(sbi, blk);
 					sum = &curseg->sum_blk->entries[blkoff];
-					DMDEBUG("%s sum %p nid %d ofs %d", __func__, sum, sum->nid, sum->ofs_in_node);
-					if(f2fs_corrupt_data(ic, sum->nid, op))
+					DMDEBUG("%s sum %p blk %d nid %d ofs %d", __func__, sum, blkoff, sum->nid, sum->ofs_in_node);
+					if(f2fs_corrupt_data(ic, sum->nid, sum->ofs_in_node, op))
 						return true;
 					break;
 				}

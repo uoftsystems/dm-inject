@@ -45,7 +45,10 @@ struct inject_rec {
 	union {
 		sector_t sector_num;
 		block_t block_num;
+		struct {
 		nid_t inode_num;
+		int offset;
+		}
 	};
 };
 
