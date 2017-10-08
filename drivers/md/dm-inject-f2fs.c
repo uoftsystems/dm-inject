@@ -195,13 +195,12 @@ bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int off, int op)
 }
 
 //associated with end_io function in DM injector module
-bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
+bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec, int op)
 {
 	struct f2fs_sb_info *sbi = ic->f2fs_sbi;
 	struct f2fs_super_block *super = F2FS_RAW_SUPER(sbi);
-	struct page *page = bio->bi_io_vec->bv_page;
-	sector_t sec = bio->bi_iter.bi_sector;
-	block_t	blk = SECTOR_TO_BLOCK((bio->bi_iter.bi_sector));
+	struct page *page = bvec->bv_page;
+	block_t	blk = SECTOR_TO_BLOCK(sec);
 	//sector count was advanced if we're already at end_io
 	//(read path)
 	if(op == REQ_OP_READ) {
@@ -322,11 +321,32 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, int op)
 //associated with map function in DM injector module
 bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
 {
-	return __f2fs_corrupt_block_dev(ic, bio, REQ_OP_WRITE);
+	unsigned int iter;
+	struct bio_vec *bvec;
+	if(bio_multiple_segments(bio)) {
+		DMDEBUG("%s multiple seg sec %d size %d idx %d done %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_idx, bio->bi_iter.bi_bvec_done);
+	}
+	for(iter=0, bvec=bio->bi_io_vec;
+		iter<bio->bi_iter.bi_size;
+		iter+=bvec->bv_len,bvec++) {
+		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_WRITE))
+			return true;
+	}
+	return false;
 }
 
 //associated with end_io function in DM injector module
 bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 {
-	return __f2fs_corrupt_block_dev(ic, bio, REQ_OP_READ);
+	unsigned int iter;
+	struct bio_vec *bvec;
+	for(iter=0, bvec=bio->bi_io_vec;
+		iter<bio->bi_iter.bi_size;
+		iter+=bvec->bv_len,bvec++) {
+		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_READ))
+			return true;
+	}
+	return false;
 }
