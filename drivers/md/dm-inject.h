@@ -50,6 +50,7 @@ struct inject_rec {
 		int offset;
 		}
 	};
+	char inode_member[64];
 };
 
 // info about the target

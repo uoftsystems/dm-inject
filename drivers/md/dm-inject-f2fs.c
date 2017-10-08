@@ -153,6 +153,26 @@ bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 	return false;
 }
 
+bool f2fs_inject_rec_has_member(struct inject_rec *rec)
+{
+	return strlen(rec->inode_member) == 0;
+}
+
+bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op)
+{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == INJECT_INODE && tmp->inode_num == ino
+			&& (tmp->op < 0 || tmp->op == op)) {
+			//DMDEBUG("%s %s %d", __func__, RW(op), ino);
+			if(f2fs_inject_rec_has_member(tmp))
+				DMDEBUG("%s corrupt member %s", __func__, tmp->inode_member);
+			return true;
+		}
+	}
+	return false;
+}
+
 // check inode against input to see if corruption should take place
 // doesn't check for bio direction or anything
 bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
@@ -265,6 +285,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 			&& num >= F2FS_RESERVED_NODE_NUM) {
 			struct f2fs_node *node = F2FS_NODE(page);
 			DMDEBUG("%s INODE %s num %d blk %d seg %u%s", __func__, RW(bio_op(bio)), num, blk, segno, (node->i.i_inline&F2FS_INLINE_DATA)? " inline data":"");
+			f2fs_corrupt_inode_member(ic, num, op);
 			if(f2fs_corrupt_inode(ic, num, op))
 				return true;
 			if(node->i.i_inline & F2FS_INLINE_DATA //what about INLINE_DENTRY flag?

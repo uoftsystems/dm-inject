@@ -11,6 +11,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
 	int tmp2 = -1;
+	char tmp_str[64];
 	struct dm_arg_set as;
 	const char *devname;
 	char dummy;
@@ -98,9 +99,18 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 				new_type = INJECT_DATA;
 			}
 			// the number
-			if (sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) != 2
-				&& sscanf(cur_arg, "%llu%*c", &tmp) != 1) {
-				ti->error = "Invalid sector to corrupt";
+			// offset within data node
+			if (new_type == INJECT_DATA && sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) == 2) {
+				//DMDEBUG("%s corrupt data %d offset %d", __func__, tmp, tmp2);
+			// specific member inside inode
+			} else if (new_type == INJECT_INODE && sscanf(cur_arg, "%llu[%s]%*c", &tmp, tmp_str) == 2) {
+				if(tmp_str[strlen(tmp_str)-1]==']')
+					tmp_str[strlen(tmp_str)-1]=0;
+				//DMDEBUG("%s corrupt inode %d member %s", __func__, tmp, tmp_str);
+			} else if (sscanf(cur_arg, "%llu%*c", &tmp) == 1) {
+				//DMDEBUG("%s corrupt %d", __func__, tmp);
+			} else {
+				ti->error = "Invalid corruption target";
 				goto bad;
 			}
 		}
@@ -122,7 +132,12 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			DMDEBUG("%s corrupt %s checkpoint", __func__, RW(new_block->op));
 		} else if (new_block->type == INJECT_INODE) {
 			new_block->inode_num = tmp;
-			DMDEBUG("%s corrupt %s inode %d", __func__, RW(new_block->op), new_block->inode_num);
+			if(strlen(tmp_str))
+				strcpy(new_block->inode_member, tmp_str);
+			else
+				new_block->inode_member[0]=0;
+			tmp_str[0]=0;
+			DMDEBUG("%s corrupt %s inode %d %s", __func__, RW(new_block->op), new_block->inode_num, new_block->inode_member);
 		} else if (new_block->type == INJECT_DATA) {
 			new_block->inode_num = tmp;
 			new_block->offset = tmp2/PAGE_SIZE;
