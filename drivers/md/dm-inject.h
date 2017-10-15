@@ -22,6 +22,13 @@
 #define RW(op) (((op)==REQ_OP_READ) ? "R" : \
 				(((op)==REQ_OP_WRITE) ? "W" : "U")) 
 
+// iterate through bvec inside bio using only the sizes
+// doesn't "advance" or otherwise change the iterator of the bio
+#define for_each_bvec_no_advance(size, bvec, bio, start)	\
+for(size = (start), bvec = (bio)->bi_io_vec;	\
+	(bio)->bi_iter.bi_size > size;				\
+	size += (bvec)->bv_len, (bvec)++)
+
 // Supported filesystems
 enum fs {
 	FS_UNKNOWN,

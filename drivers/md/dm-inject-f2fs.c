@@ -347,9 +347,7 @@ bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
 	if(bio_multiple_segments(bio)) {
 		DMDEBUG("%s multiple seg sec %d size %d idx %d done %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_idx, bio->bi_iter.bi_bvec_done);
 	}
-	for(iter=0, bvec=bio->bi_io_vec;
-		iter<bio->bi_iter.bi_size;
-		iter+=bvec->bv_len,bvec++) {
+	for_each_bvec_no_advance(iter, bvec, bio, 0) {
 		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
 		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_WRITE))
 			return true;
@@ -362,9 +360,7 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 {
 	unsigned int iter;
 	struct bio_vec *bvec;
-	for(iter=0, bvec=bio->bi_io_vec;
-		iter<bio->bi_iter.bi_size;
-		iter+=bvec->bv_len,bvec++) {
+	for_each_bvec_no_advance(iter, bvec, bio, 0) {
 		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
 		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_READ))
 			return true;
