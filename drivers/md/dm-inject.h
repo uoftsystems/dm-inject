@@ -22,11 +22,21 @@
 #define RW(op) (((op)==REQ_OP_READ) ? "R" : \
 				(((op)==REQ_OP_WRITE) ? "W" : "U")) 
 
-// iterate through bvec inside bio using only the sizes
-// doesn't "advance" or otherwise change the iterator of the bio
+/*	iterate through bvec inside bio using only the sizes
+	doesn't "advance" or otherwise change the iterator of the bio
+	1) If intercepting bio before issued to device (e.g. write)
+	bi_size is the total size
+	2) If intercepting after issue (end_io path, e.g. read)
+	then bi_idx * PAGE_SIZE = total size since bi_idx is advanced
+	past the last bvec
+	3) Partially completed would have value in bi_bvec_done.
+	This is reset when advancing to next bvec
+	Check bvec_iter_advance for details on how these are changed.
+*/
 #define for_each_bvec_no_advance(size, bvec, bio, start)	\
-for(size = (start), bvec = (bio)->bi_io_vec;	\
-	(bio)->bi_iter.bi_size > size;				\
+for(size = (start), bvec = (bio)->bi_io_vec;				\
+	size < ((bio)->bi_iter.bi_size + (bio)->bi_iter.bi_bvec_done \
+	+ (bio)->bi_iter.bi_idx*PAGE_SIZE);						\
 	size += (bvec)->bv_len, (bvec)++)
 
 // Supported filesystems

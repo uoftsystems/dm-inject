@@ -223,10 +223,10 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 	block_t	blk = SECTOR_TO_BLOCK(sec);
 	//sector count was advanced if we're already at end_io
 	//(read path)
-	if(op == REQ_OP_READ) {
+	/*if(op == REQ_OP_READ) {
 		sec -= 8;
 		blk -= 1;
-	}
+	}*/
 
 	if(f2fs_corrupt_sector(ic, sec, op))
 		return true;
@@ -348,8 +348,8 @@ bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
 		DMDEBUG("%s multiple seg sec %d size %d idx %d done %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_idx, bio->bi_iter.bi_bvec_done);
 	}
 	for_each_bvec_no_advance(iter, bvec, bio, 0) {
-		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_WRITE))
+		//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT), REQ_OP_WRITE))
 			return true;
 	}
 	return false;
@@ -361,8 +361,8 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 	unsigned int iter;
 	struct bio_vec *bvec;
 	for_each_bvec_no_advance(iter, bvec, bio, 0) {
-		DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_READ))
+		//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		if(__f2fs_corrupt_block_dev(ic, bio, bvec, bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT) - 8, REQ_OP_READ))
 			return true;
 	}
 	return false;
