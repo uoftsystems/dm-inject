@@ -424,8 +424,8 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 		struct f2fs_super_block *from_bdev = F2FS_RAW_SUPER(F2FS_SB(sb));
 		ic->f2fs_sbi = sbi;
 		ic->partial_sbi = false;
-		DMDEBUG("%s full_sbi %p sb %lx ic->sb %lx memcmp %d", __func__,
-		ic->f2fs_sbi, *from_bdev, ic->f2fs_sb_copy, memcmp(from_bdev, &ic->f2fs_sb_copy, sizeof(struct f2fs_super_block)));
+		/*DMDEBUG("%s full_sbi %p sb %lx ic->sb %lx memcmp %d", __func__,
+		ic->f2fs_sbi, *from_bdev, ic->f2fs_sb_copy, memcmp(from_bdev, &ic->f2fs_sb_copy, sizeof(struct f2fs_super_block)));*/
 	}
 	//DMDEBUG("%s sb %p", __func__, sb);
 	//intercept and inject F2FS write requests
@@ -433,6 +433,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	if(ic->inject_enable)
 		if(bio_op(bio)==REQ_OP_WRITE && (IS_F2FS(sb)||ic->partial_sbi)) {
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			if(f2fs_corrupt_block_to_dev(ic, bio))
 				return -EIO;
 		}
@@ -462,13 +463,14 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 		sbi = F2FS_SB(sb);
 		ic->f2fs_sbi = sbi;
 		ic->partial_sbi = false;
-		DMDEBUG("%s full_sbi %p", __func__, ic->f2fs_sbi);
+		//DMDEBUG("%s full_sbi %p", __func__, ic->f2fs_sbi);
 	}
 	//intercept and inject F2FS read requests
 	//data from block device travelling to memory
 	if(ic->inject_enable)
 		if(bio_op(bio)==REQ_OP_READ && (IS_F2FS(sb)||ic->partial_sbi)) {
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
+			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
