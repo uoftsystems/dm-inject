@@ -118,7 +118,7 @@ bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_BLOCK && tmp->block_num == blk
+		if(tmp->type == DM_INJECT_BLOCK && tmp->block_num == blk
 			&& (tmp->op < 0 || tmp->op == op)) {
 			DMDEBUG("%s %s %d", __func__, RW(op), blk);
 			return true;
@@ -131,7 +131,7 @@ bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_SECTOR && tmp->sector_num == sec
+		if(tmp->type == DM_INJECT_SECTOR && tmp->sector_num == sec
 			&& (tmp->op < 0 || tmp->op == op)) {
 			DMDEBUG("%s %s %d", __func__, RW(op), sec);
 			return true;
@@ -144,7 +144,7 @@ bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_CHECKPOINT
+		if(tmp->type == DM_INJECT_F2FS_CP
 			&& (tmp->op < 0 || tmp->op == op)) {
 			DMDEBUG("%s %s cp", __func__, RW(op));
 			return true;
@@ -162,7 +162,7 @@ bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_INODE && tmp->inode_num == ino
+		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)) {
 			//DMDEBUG("%s %s %d", __func__, RW(op), ino);
 			if(f2fs_inject_rec_has_member(tmp))
@@ -179,7 +179,7 @@ bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_INODE && tmp->inode_num == ino
+		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)) {
 			DMDEBUG("%s %s %d", __func__, RW(op), ino);
 			return true;
@@ -204,7 +204,7 @@ bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int off, int op)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == INJECT_DATA && tmp->inode_num == ino
+		if(tmp->type == DM_INJECT_F2FS_DATA && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)
 			&& (tmp->offset < 0 || tmp->offset == off)) {
 			DMDEBUG("%s %s %d %d", __func__, RW(op), ino, off);

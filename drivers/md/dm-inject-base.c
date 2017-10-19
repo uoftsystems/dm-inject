@@ -66,7 +66,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	
 	for (i=0;i<ic->num_corrupt;i++) {
 		char *cur_arg = dm_shift_arg(&as);
-		enum corrupt_type new_type = INJECT_BLOCK;
+		int new_type = DM_INJECT_BLOCK;
 		int new_op = -1;
 		// R or W denotes only corrupting on one type of access
 		if (strchr(cur_arg,'R') == cur_arg) {
@@ -79,7 +79,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		// checkpoint
 		if (strcmp(cur_arg, "cp") == 0) {
 			cur_arg += 2;
-			new_type = INJECT_CHECKPOINT;
+			new_type = DM_INJECT_F2FS_CP;
 		} else if (strcmp(cur_arg, "nat") == 0) {
 			DMDEBUG("%s corrupt nat", __func__);
 			continue;
@@ -87,23 +87,23 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		} else {
 			if (strchr(cur_arg,'s') == cur_arg) {
 				cur_arg++;
-				new_type = INJECT_SECTOR;
+				new_type = DM_INJECT_SECTOR;
 			} else if (strchr(cur_arg,'b') == cur_arg) {
 				cur_arg++;
-				new_type = INJECT_BLOCK;
+				new_type = DM_INJECT_BLOCK;
 			} else if (strchr(cur_arg,'i') == cur_arg) {
 				cur_arg++;
-				new_type = INJECT_INODE;
+				new_type = DM_INJECT_F2FS_INODE;
 			} else if (strchr(cur_arg,'d') == cur_arg) {
 				cur_arg++;
-				new_type = INJECT_DATA;
+				new_type = DM_INJECT_F2FS_DATA;
 			}
 			// the number
 			// offset within data node
-			if (new_type == INJECT_DATA && sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) == 2) {
+			if (new_type == DM_INJECT_F2FS_DATA && sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) == 2) {
 				//DMDEBUG("%s corrupt data %d offset %d", __func__, tmp, tmp2);
 			// specific member inside inode
-			} else if (new_type == INJECT_INODE && sscanf(cur_arg, "%llu[%s]%*c", &tmp, tmp_str) == 2) {
+			} else if (new_type == DM_INJECT_F2FS_INODE && sscanf(cur_arg, "%llu[%s]%*c", &tmp, tmp_str) == 2) {
 				if(tmp_str[strlen(tmp_str)-1]==']')
 					tmp_str[strlen(tmp_str)-1]=0;
 				//DMDEBUG("%s corrupt inode %d member %s", __func__, tmp, tmp_str);
@@ -121,16 +121,16 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		struct inject_rec *new_block = kzalloc(sizeof(*new_block), GFP_NOIO);
 		new_block->type = new_type;
 		new_block->op = new_op;
-		if (new_block->type == INJECT_SECTOR) {
+		if (new_block->type == DM_INJECT_SECTOR) {
 			new_block->sector_num = tmp;
 			DMDEBUG("%s corrupt %s sector %d", __func__, RW(new_block->op), new_block->sector_num);
-		} else if (new_block->type == INJECT_BLOCK) {
+		} else if (new_block->type == DM_INJECT_BLOCK) {
 			new_block->block_num = tmp;
 			DMDEBUG("%s corrupt %s block %d", __func__, RW(new_block->op), new_block->block_num);
-		} else if (new_block->type == INJECT_CHECKPOINT) {
+		} else if (new_block->type == DM_INJECT_F2FS_CP) {
 			new_block->block_num = 0;
 			DMDEBUG("%s corrupt %s checkpoint", __func__, RW(new_block->op));
-		} else if (new_block->type == INJECT_INODE) {
+		} else if (new_block->type == DM_INJECT_F2FS_INODE) {
 			new_block->inode_num = tmp;
 			if(strlen(tmp_str))
 				strcpy(new_block->inode_member, tmp_str);
@@ -138,7 +138,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 				new_block->inode_member[0]=0;
 			tmp_str[0]=0;
 			DMDEBUG("%s corrupt %s inode %d %s", __func__, RW(new_block->op), new_block->inode_num, new_block->inode_member);
-		} else if (new_block->type == INJECT_DATA) {
+		} else if (new_block->type == DM_INJECT_F2FS_DATA) {
 			new_block->inode_num = tmp;
 			new_block->offset = tmp2/PAGE_SIZE;
 			tmp2 = -1;

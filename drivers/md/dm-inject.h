@@ -46,18 +46,36 @@ enum fs {
 	FS_F2FS
 };
 
-enum corrupt_type {
-	INJECT_SECTOR,
-	INJECT_BLOCK,
-	INJECT_CHECKPOINT,
-	INJECT_INODE,
-	INJECT_NODE,
-	INJECT_DATA
+//Generic classifications
+#define DM_INJECT_NONE			0x0000
+#define	DM_INJECT_SECTOR		0x0001
+#define	DM_INJECT_BLOCK			0x0002
+
+//F2FS Meta area
+#define DM_INJECT_F2FS_SB		0x0004
+#define DM_INJECT_F2FS_CP		0x0008
+#define DM_INJECT_F2FS_SIT		0x0010
+#define DM_INJECT_F2FS_NAT		0x0020
+#define	DM_INJECT_F2FS_SSA		0x0040
+#define DM_INJECT_F2FS_META 	(DM_INJECT_F2FS_SB | DM_INJECT_F2FS_CP | \
+			DM_INJECT_F2FS_SIT | DM_INJECT_F2FS_NAT | DM_INJECT_F2FS_SSA)
+
+//F2FS Main area
+#define DM_INJECT_F2FS_INODE	0x0100
+#define DM_INJECT_F2FS_IND_NODE	0x0200
+#define DM_INJECT_F2FS_NODE 	(DM_INJECT_F2FS_INODE | DM_INJECT_F2FS_IND_NODE)
+#define DM_INJECT_F2FS_DATA		0x0400
+#define DM_INJECT_F2FS_MAIN		(DM_INJECT_F2FS_NODE | DM_INJECT_F2FS_DATA)
+
+enum inject_method {
+	DM_INJECT_FAIL_BLOCK,
+	DM_INJECT_ZERO,
+	DM_INJECT_RAND
 };
 
 struct inject_rec {
 	struct list_head list;
-	enum corrupt_type type;
+	int type;
 	int op;
 	union {
 		sector_t sector_num;
