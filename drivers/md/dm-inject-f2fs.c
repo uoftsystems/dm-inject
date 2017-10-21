@@ -153,6 +153,19 @@ bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 	return false;
 }
 
+bool f2fs_corrupt_nat(struct inject_c *ic, int op)
+{
+	struct inject_rec *tmp;
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == DM_INJECT_F2FS_NAT
+			&& (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s %s nat", __func__, RW(op));
+			return true;
+		}
+	}
+	return false;
+}
+
 bool f2fs_inject_rec_has_member(struct inject_rec *rec)
 {
 	return strlen(rec->inode_member) == 0;
@@ -260,7 +273,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
 		DMDEBUG("%s NAT blk %d", __func__, blk);
-		return false;
+		return f2fs_corrupt_nat(ic, op);
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
 		DMDEBUG("%s SSA blk %d", __func__, blk);

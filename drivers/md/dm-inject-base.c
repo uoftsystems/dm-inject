@@ -76,13 +76,13 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			cur_arg++;
 			new_op = REQ_OP_WRITE;
 		}
-		// checkpoint
+		// meta blocks
 		if (strcmp(cur_arg, "cp") == 0) {
 			cur_arg += 2;
 			new_type = DM_INJECT_F2FS_CP;
 		} else if (strcmp(cur_arg, "nat") == 0) {
-			DMDEBUG("%s corrupt nat", __func__);
-			continue;
+			cur_arg += 3;
+			new_type = DM_INJECT_F2FS_NAT;
 		// sector/block/inode/data
 		} else {
 			if (strchr(cur_arg,'s') == cur_arg) {
@@ -130,6 +130,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		} else if (new_block->type == DM_INJECT_F2FS_CP) {
 			new_block->block_num = 0;
 			DMDEBUG("%s corrupt %s checkpoint", __func__, RW(new_block->op));
+		} else if (new_block->type == DM_INJECT_F2FS_NAT) {
+			new_block->block_num = 0;
+			DMDEBUG("%s corrupt %s NAT", __func__, RW(new_block->op));
 		} else if (new_block->type == DM_INJECT_F2FS_INODE) {
 			new_block->inode_num = tmp;
 			if(strlen(tmp_str))
