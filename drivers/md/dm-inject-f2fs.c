@@ -449,6 +449,22 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 					blkoff = GET_BLKOFF_FROM_SEG0(sbi, blk);
 					sum = &curseg->sum_blk->entries[blkoff];
 					DMDEBUG("%s sum %p blk %d nid %d ofs %d", __func__, sum, blkoff, sum->nid, sum->ofs_in_node);
+					//if on write path, should be able to find in cache
+					//if(op==REQ_OP_WRITE) {
+					{
+						struct f2fs_nm_info *nm_i = NM_I(sbi);
+						struct nat_entry *ne;
+						struct page *cache_page;
+						struct f2fs_node *node;
+						//__lookup_nat_cache
+						ne = radix_tree_lookup(&nm_i->nat_root, sum->nid);
+						if(ne) {
+							cache_page = pagecache_get_page(NODE_MAPPING(sbi), ne->ni.ino, 0, 0);
+							node = F2FS_NODE(cache_page);
+							DMDEBUG("%s ne nid %d ino %d blk %d", __func__, ne->ni.nid, ne->ni.ino, ne->ni.blk_addr);
+							DMDEBUG("%s page %p dir %d name %.*s", __func__, cache_page, S_ISDIR(cpu_to_le16(node->i.i_mode)), le32_to_cpu(node->i.i_namelen), node->i.i_name);
+						}
+					}
 					if(f2fs_corrupt_data(ic, sum->nid, sum->ofs_in_node, op))
 						return true;
 					break;
