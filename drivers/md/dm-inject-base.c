@@ -477,8 +477,13 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
-			if(f2fs_corrupt_block_from_dev(ic, bio))
+			if(f2fs_corrupt_data_from_dev(ic, bio)!=DM_INJECT_NONE) {
+				//we corrupted some data, can do accounting here
+				//but still pretend to be normal
+				return 0;
+			} else if(f2fs_corrupt_block_from_dev(ic, bio)) {
 				return -EIO;
+			}
 		}
 	return 0;
 }

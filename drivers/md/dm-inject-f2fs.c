@@ -168,18 +168,36 @@ bool f2fs_corrupt_nat(struct inject_c *ic, int op)
 
 bool f2fs_inject_rec_has_member(struct inject_rec *rec)
 {
-	return strlen(rec->inode_member) == 0;
+	return strlen(rec->inode_member) > 0;
 }
 
-bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op)
+bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op, struct page *page)
 {
 	struct inject_rec *tmp;
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)) {
 			//DMDEBUG("%s %s %d", __func__, RW(op), ino);
-			if(f2fs_inject_rec_has_member(tmp))
-				DMDEBUG("%s corrupt member %s", __func__, tmp->inode_member);
+			if(f2fs_inject_rec_has_member(tmp)) {
+				if(strcmp(tmp->inode_member, "mode") == 0) {
+					struct f2fs_node *node = F2FS_NODE(page);
+					int old_val = node->i.i_mode;
+					node->i.i_mode = 0;
+					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+				}
+				if(strcmp(tmp->inode_member, "atime") == 0) {
+					struct f2fs_node *node = F2FS_NODE(page);
+					int old_val = node->i.i_atime;
+					node->i.i_atime = 0;
+					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+				}
+				if(strcmp(tmp->inode_member, "flags") == 0) {
+					struct f2fs_node *node = F2FS_NODE(page);
+					int old_val = node->i.i_flags;
+					node->i.i_flags = 0;
+					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+				}
+			}
 			return true;
 		}
 	}
@@ -408,7 +426,7 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 		//this is relative segment number (number within main area)
 		//not logical, only to be used to index into SSA block
 		unsigned int segno = GET_SEGNO(sbi, blk);
-		unsigned int segoff = (blk - main_blkaddr) % ENTRIES_IN_SUM;
+		//unsigned int segoff = (blk - main_blkaddr) % ENTRIES_IN_SUM;
 		struct seg_entry *seg = get_seg_entry(sbi, segno);
 		unsigned char type = seg->type;
 		nid_t num = nid_of_node(page);
@@ -419,7 +437,6 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio, struct bio_v
 			&& num >= F2FS_RESERVED_NODE_NUM) {
 			struct f2fs_node *node = F2FS_NODE(page);
 			DMDEBUG("%s INODE %s num %d blk %d seg %u%s", __func__, RW(bio_op(bio)), num, blk, segno, (node->i.i_inline&F2FS_INLINE_DATA)? " inline data":"");
-			f2fs_corrupt_inode_member(ic, num, op);
 			if(f2fs_corrupt_inode(ic, num, op))
 				return true;
 			if(node->i.i_inline & F2FS_INLINE_DATA //what about INLINE_DENTRY flag?
@@ -518,4 +535,49 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 			return true;
 	}
 	return false;
+}
+
+int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec, int op)
+{
+	struct page *page = bvec->bv_page;
+	block_t	blk = SECTOR_TO_BLOCK(sec);
+	int block_type = __f2fs_block_id(ic, bio, bvec, sec, op);
+	switch(block_type) {
+		nid_t ino;
+		case DM_INJECT_F2FS_INODE:
+			ino = ino_of_node(page);
+			if(f2fs_corrupt_inode_member(ic, ino, op, page))
+				return DM_INJECT_F2FS_INODE;
+			break;
+	}
+	blk = blk;
+	return DM_INJECT_NONE;
+}
+
+int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio)
+{
+	unsigned int iter;
+	struct bio_vec *bvec;
+	int result = DM_INJECT_NONE;
+	for_each_bvec_no_advance(iter, bvec, bio, 0) {
+		//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		result = __f2fs_corrupt_data_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512, REQ_OP_WRITE);
+		if(result != DM_INJECT_NONE)
+			return result;
+	}
+	return DM_INJECT_NONE;
+}
+
+int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio)
+{
+	unsigned int iter;
+	struct bio_vec *bvec;
+	int result = DM_INJECT_NONE;
+	for_each_bvec_no_advance(iter, bvec, bio, 0) {
+		//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
+		result = __f2fs_corrupt_data_dev(ic, bio, bvec, bio->bi_iter.bi_sector + iter/512 - 8, REQ_OP_READ);
+		if(result != DM_INJECT_NONE)
+			return result;
+	}
+	return DM_INJECT_NONE;
 }

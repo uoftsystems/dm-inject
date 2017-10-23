@@ -122,5 +122,7 @@ static inline struct super_block *get_bdev_sb(struct inject_c *ic)
 
 bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio);
 bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio);
+int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio);
+int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio);
 void init_sb_info(struct f2fs_sb_info *sbi);
 #endif
