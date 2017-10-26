@@ -548,4 +548,10 @@ config DM_ZONED
 
 	  If unsure, say N.
 
+config DM_INJECT
+       tristate "Inject target"
+       depends on BLK_DEV_DM
+       ---help---
+         Block-level error injector.
+
 endif # MD
