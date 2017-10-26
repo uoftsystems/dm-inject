@@ -302,7 +302,7 @@ int __f2fs_block_id(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, 
 			struct f2fs_node *node = F2FS_NODE(page);
 			nid_t num = nid_of_node(page);
 			if(IS_INODE(page) && num >= F2FS_RESERVED_NODE_NUM) {
-				DMDEBUG("%s INODE %s num %d name '%.*s blk' %d seg %u%s", \
+				DMDEBUG("%s INODE %s num %d name '%.*s' blk %d seg %u%s", \
 				__func__, RW(bio_op(bio)), num, \
 				le32_to_cpu(node->i.i_namelen), \
 				node->i.i_name, blk, segno, \
