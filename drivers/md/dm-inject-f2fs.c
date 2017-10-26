@@ -62,7 +62,7 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 		}
 	}
 	if (bio) {
-		bio->bi_bdev = bdev;
+		bio_set_dev(bio, bdev);
 		bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(blk_addr);
 	}
 	return bdev;
@@ -78,7 +78,7 @@ static int f2fs_inject_submit_page_bio(struct inject_c *ic, struct page *page, b
 	//we need to go deeper to lower level
 	//ic->dev->bdev
 	//f2fs_target_device(sbi, blk_addr, bio);
-	bio->bi_bdev = ic->dev->bdev;
+	bio_set_dev(bio, ic->dev->bdev);
 	bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(blk_addr);
 	bio->bi_end_io = NULL;
 	bio->bi_private = NULL;
@@ -92,7 +92,7 @@ static int f2fs_inject_submit_page_bio(struct inject_c *ic, struct page *page, b
 	bio_set_op_attrs(bio, op, REQ_META|REQ_PRIO|REQ_SYNC);
 
 	//submit_bio_wait
-	DMDEBUG("%s blk_addr %d page %lx bdev %lx sec %d", __func__, blk_addr, page, bio->bi_bdev, bio->bi_iter.bi_sector);
+	DMDEBUG("%s blk_addr %d page %lx disk %lx sec %d", __func__, blk_addr, page, bio->bi_disk, bio->bi_iter.bi_sector);
 	//submit_bio_wait(bio);
 	submit_bio(bio);
 	bio_put(bio);

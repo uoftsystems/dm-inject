@@ -164,7 +164,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	//try submit_bio
 	my_bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
 	my_bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
-	my_bio->bi_bdev = ic->dev->bdev;
+	bio_set_dev(my_bio, ic->dev->bdev);
 	my_bio->bi_iter.bi_sector = 0;
 	my_bio->bi_end_io = NULL;
 	my_bio->bi_private = NULL;
@@ -403,13 +403,13 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 		return -EIO;
 	}
 	//assign src_bdev to grab superblock if fs is mounted
-	//DMDEBUG("%s bio->bi_bdev %p bd_super %p", __func__, bio->bi_bdev, bio->bi_bdev->bd_super);
-	if(bio->bi_bdev != NULL) {
-		ic->src_bdev = bio->bi_bdev;
+	//DMDEBUG("%s bio->bi_disk %p bd_super %p", __func__, bio->bi_disk, (bdget_disk(bio->bi_disk, 0))->bd_super);
+	if(bio->bi_disk != NULL) {
+		ic->src_bdev = bdget_disk(bio->bi_disk, 0);
 	}
 
 	//linear mapping
-	bio->bi_bdev = ic->dev->bdev;
+	bio_set_dev(bio, ic->dev->bdev);
 	if(bio_sectors(bio)) {
 		bio->bi_iter.bi_sector += ic->start;
 		bio->bi_iter.bi_sector -= ti->begin;
