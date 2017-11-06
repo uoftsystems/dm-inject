@@ -4,6 +4,7 @@
  */
 
 #include "dm-inject.h"
+#define DM_MSG_PREFIX "inject"
 
 // Constructor
 static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
@@ -535,9 +536,21 @@ static void __exit dm_inject_exit(void)
 	DMDEBUG("target unregistered");
 }
 
+int dm_register_inject_fs(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL(dm_register_inject_fs);
+
+int dm_unregister_inject_fs(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL(dm_unregister_inject_fs);
+
 module_init(dm_inject_init)
 module_exit(dm_inject_exit)
 
 MODULE_AUTHOR("Andy Hwang <hwang@cs.toronto.edu>");
-MODULE_DESCRIPTION(DM_NAME " target for error injection");
+MODULE_DESCRIPTION(DM_NAME " error injection target");
 MODULE_LICENSE("GPL");

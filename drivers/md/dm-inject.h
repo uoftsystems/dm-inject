@@ -18,7 +18,6 @@
 #include "../../fs/f2fs/segment.h"
 #include "../../fs/f2fs/node.h"
 
-#define DM_MSG_PREFIX "inject"
 #define RW(op) (((op)==REQ_OP_READ) ? "R" : \
 				(((op)==REQ_OP_WRITE) ? "W" : "U")) 
 
@@ -125,4 +124,7 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio);
 int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio);
 int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio);
 void init_sb_info(struct f2fs_sb_info *sbi);
+
+int dm_register_inject_fs(void);
+int dm_unregister_inject_fs(void);
 #endif

@@ -4,6 +4,7 @@
  */
 
 #include "dm-inject.h"
+#define DM_MSG_PREFIX "inject f2fs"
 
 //(partially) init f2fs_sb_info
 //from fs/f2fs/super.c
@@ -45,6 +46,7 @@ void init_sb_info(struct f2fs_sb_info *sbi)
 			mutex_init(&sbi->wio_mutex[i][j]);
 	spin_lock_init(&sbi->cp_lock);
 }
+EXPORT_SYMBOL(init_sb_info);
 
 //generic function to read pages
 //from f2fs_target_device
@@ -523,6 +525,7 @@ bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio)
 	}
 	return false;
 }
+EXPORT_SYMBOL(f2fs_corrupt_block_to_dev);
 
 //associated with end_io function in DM injector module
 bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
@@ -537,6 +540,7 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio)
 	}
 	return false;
 }
+EXPORT_SYMBOL(f2fs_corrupt_block_from_dev);
 
 int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec, int op)
 {
@@ -550,8 +554,9 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio, struct bio_vec
 			if(f2fs_corrupt_inode_member(ic, ino, op, page))
 				return DM_INJECT_F2FS_INODE;
 			break;
+		default:
+			break;
 	}
-	blk = blk;
 	return DM_INJECT_NONE;
 }
 
@@ -568,6 +573,7 @@ int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio)
 	}
 	return DM_INJECT_NONE;
 }
+EXPORT_SYMBOL(f2fs_corrupt_data_to_dev);
 
 int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio)
 {
@@ -582,3 +588,22 @@ int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio)
 	}
 	return DM_INJECT_NONE;
 }
+EXPORT_SYMBOL(f2fs_corrupt_data_from_dev);
+
+static int __init dm_inject_f2fs_init(void)
+{ 
+	DMINFO("init");
+	return 0;
+}
+
+static void __exit dm_inject_f2fs_exit(void)
+{
+	DMINFO("exit");
+}
+
+module_init(dm_inject_f2fs_init)
+module_exit(dm_inject_f2fs_exit)
+
+MODULE_AUTHOR("Andy Hwang <hwang@cs.toronto.edu>");
+MODULE_DESCRIPTION(DM_NAME " f2fs error injection target");
+MODULE_LICENSE("GPL");
