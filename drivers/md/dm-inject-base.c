@@ -447,7 +447,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	return ret;
 }
 
-static int inject_end_io(struct dm_target *ti, struct bio *bio, int *error)
+static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct super_block *sb;
