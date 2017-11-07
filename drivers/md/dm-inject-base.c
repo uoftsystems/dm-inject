@@ -447,7 +447,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	return ret;
 }
 
-static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
+static int inject_end_io(struct dm_target *ti, struct bio *bio, int *error)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct super_block *sb;
@@ -480,12 +480,13 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, int error)
 			if(f2fs_corrupt_data_from_dev(ic, bio)!=DM_INJECT_NONE) {
 				//we corrupted some data, can do accounting here
 				//but still pretend to be normal
-				return 0;
+				return DM_ENDIO_DONE;
 			} else if(f2fs_corrupt_block_from_dev(ic, bio)) {
-				return -EIO;
+				*error = BLK_STS_IOERR;
+				return DM_ENDIO_DONE;
 			}
 		}
-	return 0;
+	return DM_ENDIO_DONE;
 }
 
 static int inject_message(struct dm_target *ti, unsigned argc, char **argv)

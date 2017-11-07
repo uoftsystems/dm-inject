@@ -197,8 +197,8 @@ bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op, struct pa
 					node->i.i_flags = 0;
 					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
 				}
+				return true;
 			}
-			return true;
 		}
 	}
 	return false;
