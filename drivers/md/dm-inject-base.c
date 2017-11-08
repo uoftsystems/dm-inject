@@ -536,13 +536,13 @@ static void __exit dm_inject_exit(void)
 	DMDEBUG("target unregistered");
 }
 
-int dm_register_inject_fs(void)
+int dm_register_inject_fs(struct inject_fs_type *fs)
 {
 	return 0;
 }
 EXPORT_SYMBOL(dm_register_inject_fs);
 
-int dm_unregister_inject_fs(void)
+int dm_unregister_inject_fs(struct inject_fs_type *fs)
 {
 	return 0;
 }

@@ -6,6 +6,16 @@
 #include "dm-inject.h"
 #define DM_MSG_PREFIX "inject f2fs"
 
+struct f2fs_context {
+	struct f2fs_sb_info *f2fs_sbi;
+	struct f2fs_sb_info f2fs_Sbi_copy;
+	struct f2fs_super_block f2fs_sb_copy;
+};
+
+static struct inject_fs_type f2fs_fs = {
+	.name = "f2fs",
+	.module = THIS_MODULE,
+};
 //(partially) init f2fs_sb_info
 //from fs/f2fs/super.c
 void init_sb_info(struct f2fs_sb_info *sbi)
@@ -591,13 +601,22 @@ int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio)
 EXPORT_SYMBOL(f2fs_corrupt_data_from_dev);
 
 static int __init dm_inject_f2fs_init(void)
-{ 
+{
+	struct f2fs_context *fs_context;
+	fs_context = kmalloc(sizeof(*fs_context), GFP_KERNEL);
+	if(!fs_context) {
+		DMERR("%s failed", __func__);
+		return -ENOMEM;
+	}
+	f2fs_fs.context = fs_context;
+	dm_register_inject_fs(&f2fs_fs);
 	DMINFO("init");
 	return 0;
 }
 
 static void __exit dm_inject_f2fs_exit(void)
 {
+	dm_unregister_inject_fs(&f2fs_fs);
 	DMINFO("exit");
 }
 

@@ -88,6 +88,12 @@ struct inject_rec {
 	char inode_member[64];
 };
 
+struct inject_fs_type {
+	char *name;
+	struct module *module;
+	void *context;
+};
+
 // info about the target
 struct inject_c {
 	//context for device mapper
@@ -107,6 +113,7 @@ struct inject_c {
 	bool partial_sbi;
 	struct f2fs_sb_info f2fs_sbi_copy;
 	struct f2fs_super_block f2fs_sb_copy;
+	struct inject_fs_type fs;
 };
 
 static inline struct super_block *get_bdev_sb(struct inject_c *ic)
@@ -125,6 +132,6 @@ int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio);
 int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio);
 void init_sb_info(struct f2fs_sb_info *sbi);
 
-int dm_register_inject_fs(void);
-int dm_unregister_inject_fs(void);
+int dm_register_inject_fs(struct inject_fs_type *fs);
+int dm_unregister_inject_fs(struct inject_fs_type *fs);
 #endif
