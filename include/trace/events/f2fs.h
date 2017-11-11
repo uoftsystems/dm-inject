@@ -50,6 +50,35 @@ TRACE_DEFINE_ENUM(CP_RECOVERY);
 TRACE_DEFINE_ENUM(CP_DISCARD);
 TRACE_DEFINE_ENUM(CP_TRIMMED);
 
+TRACE_DEFINE_ENUM(FI_NEW_INODE);
+TRACE_DEFINE_ENUM(FI_DIRTY_INODE);
+TRACE_DEFINE_ENUM(FI_AUTO_RECOVER);
+TRACE_DEFINE_ENUM(FI_DIRTY_DIR);
+TRACE_DEFINE_ENUM(FI_INC_LINK);
+TRACE_DEFINE_ENUM(FI_ACL_MODE);
+TRACE_DEFINE_ENUM(FI_NO_ALLOC);
+TRACE_DEFINE_ENUM(FI_FREE_NID);
+TRACE_DEFINE_ENUM(FI_NO_EXTENT);
+TRACE_DEFINE_ENUM(FI_INLINE_XATTR);
+TRACE_DEFINE_ENUM(FI_INLINE_DATA);
+TRACE_DEFINE_ENUM(FI_INLINE_DENTRY);
+TRACE_DEFINE_ENUM(FI_APPEND_WRITE);
+TRACE_DEFINE_ENUM(FI_UPDATE_WRITE);
+TRACE_DEFINE_ENUM(FI_NEED_IPU);
+TRACE_DEFINE_ENUM(FI_ATOMIC_FILE);
+TRACE_DEFINE_ENUM(FI_ATOMIC_COMMIT);
+TRACE_DEFINE_ENUM(FI_VOLATILE_FILE);
+TRACE_DEFINE_ENUM(FI_FIRST_BLOCK_WRITTEN);
+TRACE_DEFINE_ENUM(FI_DROP_CACHE);
+TRACE_DEFINE_ENUM(FI_DATA_EXIST);
+TRACE_DEFINE_ENUM(FI_INLINE_DOTS);
+TRACE_DEFINE_ENUM(FI_DO_DEFRAG);
+TRACE_DEFINE_ENUM(FI_DIRTY_FILE);
+TRACE_DEFINE_ENUM(FI_NO_PREALLOC);
+TRACE_DEFINE_ENUM(FI_HOT_DATA);
+TRACE_DEFINE_ENUM(FI_EXTRA_ATTR);
+TRACE_DEFINE_ENUM(FI_PROJ_INHERIT);
+
 #define show_block_type(type)						\
 	__print_symbolic(type,						\
 		{ NODE,		"NODE" },				\
@@ -149,6 +178,57 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ CP_FASTBOOT_MODE,	"fastboot mode" },		\
 		{ CP_SPEC_LOG_NUM,	"log type is 2" },		\
 		{ CP_RECOVER_DIR,	"dir needs recovery" })
+
+/* used for f2fs_inode_info->flags */
+#define show_f2fs_inode_info_flags(type)				\
+	__print_flags(type, "|",					\
+		{ FI_NEW_INODE, "FI_NEW_INODE" },			\
+		{ FI_DIRTY_INODE, "FI_DIRTY_INODE" },			\
+		{ FI_AUTO_RECOVER, "FI_AUTO_RECOVER" },			\
+		{ FI_DIRTY_DIR, "FI_DIRTY_DIR" },			\
+		{ FI_INC_LINK, "FI_INC_LINK" },				\
+		{ FI_ACL_MODE, "FI_ACL_MODE" },				\
+		{ FI_NO_ALLOC, "FI_NO_ALLOC" },				\
+		{ FI_FREE_NID, "FI_FREE_NID" },				\
+		{ FI_NO_EXTENT, "FI_NO_EXTENT" },			\
+		{ FI_INLINE_XATTR, "FI_INLINE_XATTR" },			\
+		{ FI_INLINE_DATA, "FI_INLINE_DATA" },			\
+		{ FI_INLINE_DENTRY, "FI_INLINE_DENTRY" },		\
+		{ FI_APPEND_WRITE, "FI_APPEND_WRITE" },			\
+		{ FI_UPDATE_WRITE, "FI_UPDATE_WRITE" },			\
+		{ FI_NEED_IPU, "FI_NEED_IPU" },				\
+		{ FI_ATOMIC_FILE, "FI_ATOMIC_FILE" },			\
+		{ FI_ATOMIC_COMMIT, "FI_ATOMIC_COMMIT" },		\
+		{ FI_VOLATILE_FILE, "FI_VOLATILE_FILE" },		\
+		{ FI_FIRST_BLOCK_WRITTEN, "FI_FIRST_BLOCK_WRITTEN" },	\
+		{ FI_DROP_CACHE, "FI_DROP_CACHE" },			\
+		{ FI_DATA_EXIST, "FI_DATA_EXIST" },			\
+		{ FI_INLINE_DOTS, "FI_INLINE_DOTS" },			\
+		{ FI_DO_DEFRAG, "FI_DO_DEFRAG" },			\
+		{ FI_DIRTY_FILE, "FI_DIRTY_FILE" },			\
+		{ FI_NO_PREALLOC, "FI_NO_PREALLOC" },			\
+		{ FI_HOT_DATA, "FI_HOT_DATA" },				\
+		{ FI_EXTRA_ATTR, "FI_EXTRA_ATTR" },			\
+		{ FI_PROJ_INHERIT, "FI_PROJ_INHERIT" })
+
+#ifndef _NAT_ENTRY_SOURCE
+#define _NAT_ENTRY_SOURCE
+static inline char *show_nat_entry_source(int value)
+{
+	switch(value) {
+	case 0:
+		return "NAT_CACHE";
+	case 1:
+		return "NAT_JOURNAL";
+	case 2:
+		return "NAT_BLOCK";
+	default:
+		return "Unknown option!";
+	}
+
+	return "";
+}
+#endif
 
 struct victim_sel_policy;
 struct f2fs_map_blocks;
@@ -275,6 +355,312 @@ TRACE_EVENT(f2fs_sync_fs,
 		__entry->dirty ? "dirty" : "not dirty",
 		__entry->wait)
 );
+
+// ---------------------------------------------------------------------------------------- //
+TRACE_EVENT(f2fs_find_entry,
+
+	TP_PROTO(struct inode *inode, const char *name, unsigned long flags, int level),
+
+	TP_ARGS(inode, name, flags, level),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(ino_t,	ino)
+		__field(ino_t,	pino)
+		__field(umode_t, mode)
+		__field(loff_t,	size)
+		__field(unsigned int, nlink)
+		__field(blkcnt_t, blocks)
+		__field(__u8,	advise)
+		__field(const char *,	name)
+		__field(unsigned long,	flags)
+		__field(int,	level)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= inode->i_sb->s_dev;
+		__entry->ino	= inode->i_ino;
+		__entry->pino	= F2FS_I(inode)->i_pino;
+		__entry->mode	= inode->i_mode;
+		__entry->size	= inode->i_size;
+		__entry->nlink	= inode->i_nlink;
+		__entry->blocks	= inode->i_blocks;
+		__entry->advise	= F2FS_I(inode)->i_advise;
+		__entry->name	= name;
+		__entry->flags	= flags;
+		__entry->level	= level;
+	),
+
+	TP_printk("dev = (%d,%d), ino = %lu, pino = %lu, i_mode = 0x%hx, "
+		"i_size = %lld, i_nlink = %u, i_blocks = %llu, i_advise = 0x%x "
+		"name = %s, level = %d, flags = %s",
+		show_dev_ino(__entry),
+		(unsigned long)__entry->pino,
+		__entry->mode,
+		__entry->size,
+		(unsigned int)__entry->nlink,
+		(unsigned long long)__entry->blocks,
+		(unsigned char)__entry->advise,
+		__entry->name,
+		__entry->level,
+		show_f2fs_inode_info_flags(__entry->flags))
+);
+
+TRACE_EVENT(f2fs_get_node_info,
+
+	TP_PROTO(nid_t nid),
+
+	TP_ARGS(nid),
+
+	TP_STRUCT__entry(
+		__field(nid_t,	nid)
+	),
+
+	TP_fast_assign(
+		__entry->nid	= nid;
+	),
+
+	TP_printk("nid = %u",
+		(unsigned int)__entry->nid)
+);
+
+TRACE_EVENT(f2fs_nat_entry,
+
+	TP_PROTO(struct node_info *ni, int cached),
+
+	TP_ARGS(ni, cached),
+
+	TP_STRUCT__entry(
+		__field(nid_t,	nid)
+		__field(ino_t,	ino)
+		__field(block_t,	blk_addr)
+		__field(unsigned char,	version)
+		__field(unsigned char,	flag)
+		__field(int,	cached)
+	),
+
+	TP_fast_assign(
+		__entry->nid	= ni->nid;
+		__entry->ino	= ni->ino;
+		__entry->blk_addr	= ni->blk_addr;
+		__entry->version	= ni->version;
+		__entry->flag	= ni->flag;
+		__entry->cached	= cached;
+	),
+
+	TP_printk("nid = %u, ino = %lu, blkaddr = 0x%llx, version = %uc, flag = %uc, %s",
+		__entry->nid,
+		__entry->ino,
+		(unsigned long long)__entry->blk_addr,
+		__entry->version,
+		__entry->flag,
+		show_nat_entry_source(__entry->cached))
+);
+
+TRACE_EVENT(f2fs_dirty_nat_entry,
+
+	TP_PROTO(struct node_info *ni),
+
+	TP_ARGS(ni),
+
+	TP_STRUCT__entry(
+		__field(nid_t,	nid)
+		__field(ino_t,	ino)
+		__field(block_t,	blk_addr)
+		__field(unsigned char,	version)
+		__field(unsigned char,	flag)
+	),
+
+	TP_fast_assign(
+		__entry->nid	= ni->nid;
+		__entry->ino	= ni->ino;
+		__entry->blk_addr	= ni->blk_addr;
+		__entry->version	= ni->version;
+		__entry->flag	= ni->flag;
+	),
+
+	TP_printk("nid = %u, ino = %lu, blkaddr = 0x%llx, version = %uc, flag = %uc",
+		__entry->nid,
+		__entry->ino,
+		(unsigned long long)__entry->blk_addr,
+		__entry->version,
+		__entry->flag)
+);
+
+TRACE_EVENT(f2fs_flush_nat_journal,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, int entries, short start),
+
+	TP_ARGS(sbi, entries, start),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(int,	entries)
+		__field(short,	start)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->entries	= entries;
+		__entry->start	= start;
+	),
+
+	TP_printk("dev = (%d,%d), NAT journal entries: %d [%s]",
+		show_dev(__entry->dev),
+		__entry->entries,
+		__entry->start ? "START" : "END")
+);
+
+TRACE_EVENT(f2fs_flush_nat_entries,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, short to_journal),
+
+	TP_ARGS(sbi, to_journal),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(short,	to_journal)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->to_journal	= to_journal;
+	),
+
+	TP_printk("dev = (%d,%d) [%s]",
+		show_dev(__entry->dev),
+		__entry->to_journal ? "JOURNAL" : "DISK BLOCK")
+);
+
+TRACE_EVENT(f2fs_clear_prefree_segments,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, unsigned int segments),
+
+	TP_ARGS(sbi, segments),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(unsigned int,	segments)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->segments	= segments;
+	),
+
+	TP_printk("dev = (%d,%d), total segments: %u",
+		show_dev(__entry->dev),
+		__entry->segments)
+);
+
+TRACE_EVENT(f2fs_add_dirty_sentries,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, struct sit_info *sit_info),
+
+	TP_ARGS(sbi, sit_info),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(unsigned int,	dirty_sentries)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->dirty_sentries	= sit_info->dirty_sentries;
+	),
+
+	TP_printk("dev = (%d,%d), total dirty sentries: %u",
+		show_dev(__entry->dev),
+		__entry->dirty_sentries)
+);
+
+TRACE_EVENT(f2fs_flush_sit_entries,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, short to_journal),
+
+	TP_ARGS(sbi, to_journal),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(short,	to_journal)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->to_journal	= to_journal;
+	),
+
+	TP_printk("dev = (%d,%d) [%s]",
+		show_dev(__entry->dev),
+		__entry->to_journal ? "JOURNAL" : "DISK BLOCK")
+);
+
+TRACE_EVENT(f2fs_flush_sit_journal,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, int entries, short start),
+
+	TP_ARGS(sbi, entries, start),
+
+	TP_STRUCT__entry(
+		__field(dev_t,	dev)
+		__field(int,	entries)
+		__field(short,	start)
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sbi->sb->s_dev;
+		__entry->entries	= entries;
+		__entry->start	= start;
+	),
+
+	TP_printk("dev = (%d,%d), SIT journal entries: %d [%s]",
+		show_dev(__entry->dev),
+		__entry->entries,
+		__entry->start ? "START" : "END")
+);
+
+TRACE_EVENT(f2fs_sit_journal_entry,
+
+	TP_PROTO(unsigned int segno, int dirtied),
+
+	TP_ARGS(segno, dirtied),
+
+	TP_STRUCT__entry(
+		__field(unsigned int,	segno)
+		__field(int,	dirtied)
+	),
+
+	TP_fast_assign(
+		__entry->segno	= segno;
+		__entry->dirtied	= dirtied;
+	),
+
+	TP_printk("segno = %u, dirtied = %d",
+		__entry->segno,
+		__entry->dirtied)
+);
+
+TRACE_EVENT(f2fs_dirty_sit_entry,
+
+	TP_PROTO(unsigned int type, unsigned int valid_blocks),
+
+	TP_ARGS(type, valid_blocks),
+
+	TP_STRUCT__entry(
+		__field(unsigned int,	type)
+		__field(unsigned int,	valid_blocks)
+	),
+
+	TP_fast_assign(
+		__entry->type	= type;
+		__entry->valid_blocks	= valid_blocks;
+	),
+
+	TP_printk("Valid blocks: %u, %s",
+		__entry->valid_blocks,
+		show_data_type(__entry->type))
+);
+// ---------------------------------------------------------------------------------------- //
 
 DEFINE_EVENT(f2fs__inode, f2fs_iget,
 
@@ -999,6 +1385,13 @@ DECLARE_EVENT_CLASS(f2fs__submit_page_bio,
 		show_block_type(__entry->type))
 );
 
+DEFINE_EVENT(f2fs__submit_page_bio, f2fs_meta_page,
+
+		TP_PROTO(struct page *page, struct f2fs_io_info *fio),
+
+		TP_ARGS(page, fio)
+);
+
 DEFINE_EVENT_CONDITION(f2fs__submit_page_bio, f2fs_submit_page_bio,
 
 	TP_PROTO(struct page *page, struct f2fs_io_info *fio),
@@ -1043,12 +1436,14 @@ DECLARE_EVENT_CLASS(f2fs__bio,
 		__entry->size		= bio->bi_iter.bi_size;
 	),
 
-	TP_printk("dev = (%d,%d)/(%d,%d), rw = %s(%s), %s, sector = %lld, size = %u",
+	TP_printk("dev = (%d,%d)/(%d,%d), rw = %s(%s), %s, sector = %lld"
+		"blk_addr = 0x%llx, bsize = %u",
 		show_dev(__entry->target),
 		show_dev(__entry->dev),
 		show_bio_type(__entry->op, __entry->op_flags),
 		show_block_type(__entry->type),
 		(unsigned long long)__entry->sector,
+		(unsigned long long)__entry->sector >> 3,
 		__entry->size)
 );
 

@@ -428,6 +428,8 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 
 	ni->nid = nid;
 
+	trace_f2fs_get_node_info(nid);
+
 	/* Check nat cache */
 	down_read(&nm_i->nat_tree_lock);
 	e = __lookup_nat_cache(nm_i, nid);
@@ -435,6 +437,7 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 		ni->ino = nat_get_ino(e);
 		ni->blk_addr = nat_get_blkaddr(e);
 		ni->version = nat_get_version(e);
+		trace_f2fs_nat_entry(ni, 0);
 		up_read(&nm_i->nat_tree_lock);
 		return;
 	}
@@ -447,6 +450,7 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 	if (i >= 0) {
 		ne = nat_in_journal(journal, i);
 		node_info_from_raw_nat(ni, &ne);
+		trace_f2fs_nat_entry(ni, 1);
 	}
 	up_read(&curseg->journal_rwsem);
 	if (i >= 0) {
@@ -462,6 +466,7 @@ void get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
 	nat_blk = (struct f2fs_nat_block *)page_address(page);
 	ne = nat_blk->entries[nid - start_nid];
 	node_info_from_raw_nat(ni, &ne);
+	trace_f2fs_nat_entry(ni, 2);
 	f2fs_put_page(page, 1);
 cache:
 	/* cache nat entry */
@@ -2392,6 +2397,8 @@ static void remove_nats_in_journal(struct f2fs_sb_info *sbi)
 	int i;
 
 	down_write(&curseg->journal_rwsem);
+	trace_f2fs_flush_nat_journal(sbi, nats_in_cursum(journal), 1);
+
 	for (i = 0; i < nats_in_cursum(journal); i++) {
 		struct nat_entry *ne;
 		struct f2fs_nat_entry raw_ne;
@@ -2403,6 +2410,9 @@ static void remove_nats_in_journal(struct f2fs_sb_info *sbi)
 		if (!ne) {
 			ne = __alloc_nat_entry(nid, true);
 			__init_nat_entry(nm_i, ne, &raw_ne, true);
+			trace_f2fs_nat_entry(&ne->ni, 0);
+		} else {
+			trace_f2fs_nat_entry(&ne->ni, 1);
 		}
 
 		/*
@@ -2419,7 +2429,9 @@ static void remove_nats_in_journal(struct f2fs_sb_info *sbi)
 
 		__set_nat_cache_dirty(nm_i, ne);
 	}
+
 	update_nats_in_cursum(journal, -i);
+	trace_f2fs_flush_nat_journal(sbi, nats_in_cursum(journal), 0);
 	up_write(&curseg->journal_rwsem);
 }
 
@@ -2494,6 +2506,7 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 		!__has_cursum_space(journal, set->entry_cnt, NAT_JOURNAL))
 		to_journal = false;
 
+	trace_f2fs_flush_nat_entries(sbi, to_journal);
 	if (to_journal) {
 		down_write(&curseg->journal_rwsem);
 	} else {
@@ -2510,15 +2523,16 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 
 		f2fs_bug_on(sbi, nat_get_blkaddr(ne) == NEW_ADDR);
 
+		trace_f2fs_dirty_nat_entry(&ne->ni);
 		if (to_journal) {
 			offset = lookup_journal_in_cursum(journal,
 							NAT_JOURNAL, nid, 1);
 			f2fs_bug_on(sbi, offset < 0);
 			raw_ne = &nat_in_journal(journal, offset);
 			nid_in_journal(journal, offset) = cpu_to_le32(nid);
-		} else {
+		} else
 			raw_ne = &nat_blk->entries[nid - start_nid];
-		}
+
 		raw_nat_from_node_info(raw_ne, &ne->ni);
 		nat_reset_flag(ne);
 		__clear_nat_cache_dirty(NM_I(sbi), set, ne);

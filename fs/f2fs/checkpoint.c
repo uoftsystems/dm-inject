@@ -103,6 +103,7 @@ repeat:
 	if (unlikely(!PageUptodate(page)))
 		f2fs_stop_checkpoint(sbi, false);
 out:
+	trace_f2fs_meta_page(page, &fio);
 	return page;
 }
 

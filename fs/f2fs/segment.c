@@ -1612,6 +1612,7 @@ static void set_prefree_as_free_segments(struct f2fs_sb_info *sbi)
 	unsigned int segno;
 
 	mutex_lock(&dirty_i->seglist_lock);
+	trace_f2fs_clear_prefree_segments(sbi, MAIN_SEGS(sbi));
 	for_each_set_bit(segno, dirty_i->dirty_segmap[PRE], MAIN_SEGS(sbi))
 		__set_test_and_free(sbi, segno);
 	mutex_unlock(&dirty_i->seglist_lock);
@@ -3289,9 +3290,11 @@ static void add_sits_in_set(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_sm_info *sm_info = SM_I(sbi);
 	struct list_head *set_list = &sm_info->sit_entry_set;
-	unsigned long *bitmap = SIT_I(sbi)->dirty_sentries_bitmap;
+	struct sit_info *sit_info = SIT_I(sbi);
+	unsigned long *bitmap = sit_info->dirty_sentries_bitmap;
 	unsigned int segno;
 
+	trace_f2fs_add_dirty_sentries(sbi, sit_info);
 	for_each_set_bit(segno, bitmap, MAIN_SEGS(sbi))
 		add_sit_entry(segno, set_list);
 }
@@ -3303,17 +3306,22 @@ static void remove_sits_in_journal(struct f2fs_sb_info *sbi)
 	int i;
 
 	down_write(&curseg->journal_rwsem);
+	trace_f2fs_flush_sit_journal(sbi, sits_in_cursum(journal), 1);
+
 	for (i = 0; i < sits_in_cursum(journal); i++) {
 		unsigned int segno;
 		bool dirtied;
 
 		segno = le32_to_cpu(segno_in_journal(journal, i));
 		dirtied = __mark_sit_entry_dirty(sbi, segno);
+		trace_f2fs_sit_journal_entry(segno, dirtied);
 
 		if (!dirtied)
 			add_sit_entry(segno, &SM_I(sbi)->sit_entry_set);
 	}
+
 	update_sits_in_cursum(journal, -i);
+	trace_f2fs_flush_sit_journal(sbi, sits_in_cursum(journal), 0);
 	up_write(&curseg->journal_rwsem);
 }
 
@@ -3368,6 +3376,7 @@ void flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 			!__has_cursum_space(journal, ses->entry_cnt, SIT_JOURNAL))
 			to_journal = false;
 
+		trace_f2fs_flush_sit_entries(sbi, to_journal);
 		if (to_journal) {
 			down_write(&curseg->journal_rwsem);
 		} else {
@@ -3380,6 +3389,7 @@ void flush_sit_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 			int offset, sit_offset;
 
 			se = get_seg_entry(sbi, segno);
+			trace_f2fs_dirty_sit_entry(se->type, se->valid_blocks);
 
 			/* add discard candidates */
 			if (!(cpc->reason & CP_DISCARD)) {

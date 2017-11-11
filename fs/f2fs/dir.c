@@ -17,6 +17,9 @@
 #include "xattr.h"
 #include <trace/events/f2fs.h>
 
+#include "trace.h"
+#include <trace/events/f2fs.h>
+
 static unsigned long dir_blocks(struct inode *inode)
 {
 	return ((unsigned long long) (i_size_read(inode) + PAGE_SIZE - 1))
@@ -208,6 +211,8 @@ struct f2fs_dir_entry *__f2fs_find_entry(struct inode *dir,
 	unsigned int max_depth;
 	unsigned int level;
 
+	trace_f2fs_find_entry(dir, fname_name(fname), F2FS_I(dir)->flags, -1);
+
 	if (f2fs_has_inline_dentry(dir)) {
 		*res_page = NULL;
 		de = find_in_inline_dir(dir, fname, res_page);
@@ -230,6 +235,7 @@ struct f2fs_dir_entry *__f2fs_find_entry(struct inode *dir,
 
 	for (level = 0; level < max_depth; level++) {
 		*res_page = NULL;
+		trace_f2fs_find_entry(dir, fname_name(fname), F2FS_I(dir)->flags, level);
 		de = find_in_level(dir, level, fname, res_page);
 		if (de || IS_ERR(*res_page))
 			break;
