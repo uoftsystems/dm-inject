@@ -331,7 +331,7 @@ bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_BLOCK && tmp->block_num == blk
 			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s %d", __func__, RW(op), blk);
+			DMDEBUG("%s CORRUPT %s block %d", __func__, RW(op), blk);
 			return true;
 		}
 	}
@@ -344,7 +344,7 @@ bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_SECTOR && tmp->sector_num == sec
 			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s %d", __func__, RW(op), sec);
+			DMDEBUG("%s CORRUPT %s sector %d", __func__, RW(op), sec);
 			return true;
 		}
 	}
@@ -357,7 +357,7 @@ bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_F2FS_CP
 			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s cp", __func__, RW(op));
+			DMDEBUG("%s CORRUPT %s cp", __func__, RW(op));
 			return true;
 		}
 	}
@@ -370,7 +370,7 @@ bool f2fs_corrupt_nat(struct inject_c *ic, int op)
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_F2FS_NAT
 			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s nat", __func__, RW(op));
+			DMDEBUG("%s CORRUPT %s nat", __func__, RW(op));
 			return true;
 		}
 	}
@@ -394,19 +394,19 @@ bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op, struct pa
 					struct f2fs_node *node = F2FS_NODE(page);
 					int old_val = node->i.i_mode;
 					node->i.i_mode = 0;
-					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
 				}
 				if(strcmp(tmp->inode_member, "atime") == 0) {
 					struct f2fs_node *node = F2FS_NODE(page);
 					int old_val = node->i.i_atime;
 					node->i.i_atime = 0;
-					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
 				}
 				if(strcmp(tmp->inode_member, "flags") == 0) {
 					struct f2fs_node *node = F2FS_NODE(page);
 					int old_val = node->i.i_flags;
 					node->i.i_flags = 0;
-					DMDEBUG("%s %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
 				}
 				return true;
 			}
@@ -423,7 +423,7 @@ bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s %s %d", __func__, RW(op), ino);
+			DMDEBUG("%s CORRUPT %s inode %d", __func__, RW(op), ino);
 			return true;
 		}
 	}
@@ -449,7 +449,7 @@ bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int off, int op)
 		if(tmp->type == DM_INJECT_F2FS_DATA && tmp->inode_num == ino
 			&& (tmp->op < 0 || tmp->op == op)
 			&& (tmp->offset < 0 || tmp->offset == off)) {
-			DMDEBUG("%s %s %d %d", __func__, RW(op), ino, off);
+			DMDEBUG("%s CORRUPT %s inode %d data off %d", __func__, RW(op), ino, off);
 			return true;
 		}
 	}

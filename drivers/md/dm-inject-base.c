@@ -278,14 +278,14 @@ static int __init dm_inject_init(void)
 	int r = dm_register_target(&inject_target);
 	if (r<0)
 		DMERR("dm_inject register failed %d", r);
-	DMDEBUG("target registered");
+	DMDEBUG("dm-inject target registered");
 	return r;
 }
 
 static void __exit dm_inject_exit(void)
 {
 	dm_unregister_target(&inject_target);
-	DMDEBUG("target unregistered");
+	DMDEBUG("dm-inject target unregistered");
 }
 
 int dm_register_inject_fs(struct inject_fs_type *fs)
@@ -298,6 +298,9 @@ EXPORT_SYMBOL(dm_register_inject_fs);
 
 int dm_unregister_inject_fs(struct inject_fs_type *fs)
 {
+	if(fst == fs)
+		fst = NULL;
+	DMDEBUG("unregistered %s", fs->name);
 	return 0;
 }
 EXPORT_SYMBOL(dm_unregister_inject_fs);
