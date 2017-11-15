@@ -749,19 +749,21 @@ bool f2fs_can_corrupt(struct inject_c *ic)
 {
 	struct f2fs_context *fsc = (struct f2fs_context *) ic->context;
 	struct super_block *sb = NULL;
+	bool ret = false;
 
 	//already have full or partial sb
-	if(fsc->partial_sbi)
+	if(fsc->f2fs_sbi != &fsc->f2fs_sbi_copy)
 		return true;
-	if(fsc->f2fs_sbi)
-		return true;
+	else if(fsc->partial_sbi)
+		ret = true; //move on to try to get full sb
 
-	//don't have either, but fs is mounted so will be able to get
+	//none or partial, but fs is mounted
+	//so we can try to get full sb
 	sb = get_bdev_sb(ic);
 	if(sb && f2fs_get_full_sb(ic))
-		return true;
+		ret = true;
 
-	return false;
+	return ret;
 }
 
 //associated with map function in DM injector module
