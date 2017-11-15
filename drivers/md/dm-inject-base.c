@@ -235,7 +235,7 @@ static int check_corrupt_sector(struct inject_c *ic, sector_t s)
 	return 0;
 }
 
-static int check_corrupt_block(struct inject_c *ic, block_t blk)
+static int check_corrupt_block(struct inject_c *ic, u32 blk)
 {
 	int i;
 	//DMDEBUG("%s %d", __func__, blk);

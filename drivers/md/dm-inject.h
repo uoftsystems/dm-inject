@@ -79,11 +79,11 @@ struct inject_rec {
 	int op;
 	union {
 		sector_t sector_num;
-		block_t block_num;
+		u32 block_num;
 		struct {
-		nid_t inode_num;
+		u32 inode_num;
 		int offset;
-		}
+		};
 	};
 	char inode_member[64];
 };
