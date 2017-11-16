@@ -121,7 +121,7 @@ void f2fs_get_partial_sb(struct inject_c *ic)
 	}
 }
 
-int f2fs_init(struct inject_c *ic)
+int f2fs_inject_ctr(struct inject_c *ic)
 {
 	struct f2fs_context *fsc;
 	fsc = kmalloc(sizeof(*fsc), GFP_KERNEL);
@@ -136,7 +136,7 @@ int f2fs_init(struct inject_c *ic)
 	return 0;
 }
 
-void f2fs_exit(struct inject_c *ic)
+void f2fs_inject_dtr(struct inject_c *ic)
 {
 	struct f2fs_context *fsc = (struct f2fs_context *) ic->context;
 	if(fsc)
@@ -861,8 +861,8 @@ int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio)
 static struct inject_fs_type f2fs_fs = {
 	.name = "f2fs",
 	.module = THIS_MODULE,
-	.init = f2fs_init,
-	.exit = f2fs_exit,
+	.ctr = f2fs_inject_ctr,
+	.dtr = f2fs_inject_dtr,
 	.parse_args = f2fs_parse_args,
 	.block_from_dev = f2fs_corrupt_block_from_dev,
 	.block_to_dev = f2fs_corrupt_block_to_dev,
