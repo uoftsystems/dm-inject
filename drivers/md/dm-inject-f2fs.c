@@ -121,7 +121,7 @@ void f2fs_get_partial_sb(struct inject_c *ic)
 	}
 }
 
-int f2fs_init(struct inject_c *ic, struct page *page)
+int f2fs_init(struct inject_c *ic)
 {
 	struct f2fs_context *fsc;
 	fsc = kmalloc(sizeof(*fsc), GFP_KERNEL);

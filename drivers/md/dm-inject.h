@@ -85,7 +85,7 @@ struct inject_c {
 struct inject_fs_type {
 	char *name;
 	struct module *module;
-	int (*init)(struct inject_c *ic, struct page *page);
+	int (*init)(struct inject_c *ic);
 	void (*exit)(struct inject_c *ic);
 	int (*parse_args)(struct inject_c *ic, struct dm_arg_set *as, char *error);
 	bool (*block_from_dev)(struct inject_c *ic, struct bio *bio);

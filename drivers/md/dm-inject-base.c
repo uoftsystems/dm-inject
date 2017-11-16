@@ -70,7 +70,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ic->inject_enable = false; //injection disabled by default
 	ti->num_discard_bios = 1;
 	ti->private = ic;
-	fst->init(ic, NULL);
+	fst->init(ic);
 	return 0;
 	bad:
 		if(ic->corrupt_sector)
