@@ -52,6 +52,8 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		DMDEBUG("requested dm-inject-f2fs");
 	}
 
+	INIT_LIST_HEAD(&ic->inject_list);
+
 	ret = fst->parse_args(ic, &as, ti->error);
 
 	if(ret)

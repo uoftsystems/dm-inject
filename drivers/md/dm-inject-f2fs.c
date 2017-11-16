@@ -152,8 +152,6 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	char dummy;
 	int i, ret = 0;
 
-	INIT_LIST_HEAD(&ic->inject_list);
-
 	// read sectors to corrupt
 	if (as->argc > 0) {
 		ic->num_corrupt = as->argc;
