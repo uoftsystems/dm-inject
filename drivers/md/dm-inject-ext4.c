@@ -45,26 +45,27 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	return 0;
 }
 
-bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio)
+bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-	DMDEBUG("%s", __func__);
-	return false;
-}
-bool ext4_block_to_dev(struct inject_c *ic, struct bio *bio)
-{
-	DMDEBUG("%s", __func__);
+	DMDEBUG("%s %s sec %d", __func__, RW(bio_op(bio)), sec);
 	return false;
 }
 
-int ext4_data_from_dev(struct inject_c *ic, struct bio *bio)
+bool ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-	DMDEBUG("%s", __func__);
+	DMDEBUG("%s %s sec %d", __func__, RW(bio_op(bio)), sec);
+	return false;
+}
+
+int ext4_data_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+{
+	DMDEBUG("%s %s sec %d", __func__, RW(bio_op(bio)), sec);
 	return DM_INJECT_NONE;
 }
 
-int ext4_data_to_dev(struct inject_c *ic, struct bio *bio)
+int ext4_data_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-	DMDEBUG("%s", __func__);
+	DMDEBUG("%s %s sec %d", __func__, RW(bio_op(bio)), sec);
 	return DM_INJECT_NONE;
 }
 

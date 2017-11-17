@@ -191,6 +191,8 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct super_block *sb;
 	int ret = DM_MAPIO_SUBMITTED;
+	struct bio_vec *bvec;
+	unsigned int iter;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 
@@ -220,12 +222,15 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	//data travelling from from memory to block device
 	if(ic->inject_enable)
 		if(bio_op(bio)==REQ_OP_WRITE) {
-			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
-			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
-			if(ic->fs_t->data_to_dev(ic, bio)!=DM_INJECT_NONE)
-				ret = max(ret, DM_MAPIO_REMAPPED);
-			else if(ic->fs_t->block_to_dev(ic, bio))
-				ret = max(ret, DM_MAPIO_KILL);
+			for_each_bvec_no_advance(iter, bvec, bio, 0) {
+				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
+				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
+				if(ic->fs_t->data_to_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE)
+					ret = max(ret, DM_MAPIO_REMAPPED);
+				else if(ic->fs_t->block_to_dev(ic, bio, bvec, sec))
+					ret = max(ret, DM_MAPIO_KILL);
+			}
 		}
 
 	if(ret==DM_MAPIO_SUBMITTED)
@@ -238,6 +243,8 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	int ret = DM_ENDIO_DONE;
+	struct bio_vec *bvec;
+	unsigned int iter;
 	*error = BLK_STS_OK;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
@@ -253,14 +260,17 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
-			if(ic->fs_t->data_from_dev(ic, bio)!=DM_INJECT_NONE) {
-				//we corrupted some data, can do accounting here
-				//but still pretend to be normal
-				*error = max(*error, BLK_STS_OK);
-				ret = max(ret, DM_ENDIO_DONE);
-			} else if(ic->fs_t->block_from_dev(ic, bio)) {
-				*error = max(*error, BLK_STS_IOERR);
-				ret = max(ret, DM_ENDIO_DONE);
+			for_each_bvec_no_advance(iter, bvec, bio, 0) {
+				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT) - 8;
+				if(ic->fs_t->data_from_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE) {
+					//we corrupted some data, can do accounting here
+					//but still pretend to be normal
+					*error = max(*error, BLK_STS_OK);
+					ret = max(ret, DM_ENDIO_DONE);
+				} else if(ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
+					*error = max(*error, BLK_STS_IOERR);
+					ret = max(ret, DM_ENDIO_DONE);
+				}
 			}
 		}
 	return ret;

@@ -94,10 +94,10 @@ struct inject_fs_type {
 	int (*ctr)(struct inject_c *ic);
 	void (*dtr)(struct inject_c *ic);
 	int (*parse_args)(struct inject_c *ic, struct dm_arg_set *as, char *error);
-	bool (*block_from_dev)(struct inject_c *ic, struct bio *bio);
-	bool (*block_to_dev)(struct inject_c *ic, struct bio *bio);
-	int (*data_from_dev)(struct inject_c *ic, struct bio *bio);
-	int (*data_to_dev)(struct inject_c *ic, struct bio *bio);
+	bool (*block_from_dev)(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec);
+	bool (*block_to_dev)(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec);
+	int (*data_from_dev)(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec);
+	int (*data_to_dev)(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec);
 };
 
 static inline struct super_block *get_bdev_sb(struct inject_c *ic)
