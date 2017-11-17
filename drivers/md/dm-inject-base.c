@@ -106,6 +106,7 @@ static void inject_dtr(struct dm_target *ti)
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct inject_rec *tmp, *tmp2;
 	dm_put_device(ti, ic->dev);
+	ic->fs_t->dtr(ic);
 	list_for_each_entry_safe(tmp, tmp2, &ic->inject_list, list) {
 		list_del(&tmp->list);
 		kfree(tmp);
@@ -221,8 +222,10 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 		if(bio_op(bio)==REQ_OP_WRITE) {
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
-			if(ic->fs_t->block_to_dev(ic, bio))
-				return DM_MAPIO_KILL;
+			if(ic->fs_t->data_to_dev(ic, bio)!=DM_INJECT_NONE)
+				ret = DM_MAPIO_REMAPPED;
+			else if(ic->fs_t->block_to_dev(ic, bio))
+				ret = DM_MAPIO_KILL;
 		}
 
 	if(ret==DM_MAPIO_SUBMITTED)
