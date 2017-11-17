@@ -6,7 +6,8 @@
 
 #include "dm-inject.h"
 #define DM_MSG_PREFIX "inject"
-static struct inject_fs_type *fst = NULL;
+static LIST_HEAD(_fs_list);
+static DEFINE_SPINLOCK(_fs_list_lock);
 
 // Constructor
 static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
@@ -47,14 +48,36 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	ic->start = tmp;
 
-	if(!fst) {
-		request_module("dm-inject-f2fs");
-		DMDEBUG("requested dm-inject-f2fs");
+	//see if fs type is specified.
+	//if not default to f2fs (TODO:remove f2fs)
+	if(as.argc > 0 && sscanf(*as.argv, "%s%*c", tmp_str) == 1
+		&& request_module("dm-inject-%s", tmp_str) == 0) {
+		dm_shift_arg(&as);
+	} else if(request_module("dm-inject-f2fs") == 0) {
+		strcpy(tmp_str, "f2fs");
+	} else {
+		DMDEBUG("unable to request module dm-inject-%s", tmp_str);
+		goto bad;
+	}
+
+	DMDEBUG("request module dm-inject-%s", tmp_str);
+
+	if(list_empty(&_fs_list)) {
+		DMDEBUG("unable to register any inject filesystem");
+		goto bad;
+	}
+
+	if(dm_find_inject_fs(tmp_str)!=NULL) {
+		DMDEBUG("found inject_fs_type %s, assign to inject_c", tmp_str);
+		ic->fs_t = dm_find_inject_fs(tmp_str);
+	} else {
+		DMDEBUG("no matching module for filesystem injection: %s", tmp_str);
+		goto bad;
 	}
 
 	INIT_LIST_HEAD(&ic->inject_list);
 
-	ret = fst->parse_args(ic, &as, ti->error);
+	ret = ic->fs_t->parse_args(ic, &as, ti->error);
 
 	if(ret)
 		return ret;
@@ -70,13 +93,9 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ic->inject_enable = false; //injection disabled by default
 	ti->num_discard_bios = 1;
 	ti->private = ic;
-	fst->ctr(ic);
+	ic->fs_t->ctr(ic);
 	return 0;
 	bad:
-		if(ic->corrupt_sector)
-			kfree(ic->corrupt_sector);
-		if(ic->corrupt_block)
-			kfree(ic->corrupt_block);
 		kfree(ic);
 		return ret;
 }
@@ -87,10 +106,6 @@ static void inject_dtr(struct dm_target *ti)
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct inject_rec *tmp, *tmp2;
 	dm_put_device(ti, ic->dev);
-	if(ic->corrupt_sector)
-		kfree(ic->corrupt_sector);
-	if(ic->corrupt_block)
-		kfree(ic->corrupt_block);
 	list_for_each_entry_safe(tmp, tmp2, &ic->inject_list, list) {
 		list_del(&tmp->list);
 		kfree(tmp);
@@ -98,6 +113,7 @@ static void inject_dtr(struct dm_target *ti)
 	kfree(ic);
 }
 
+/*
 // check if a particular sector is in the list to corrupt
 static int check_corrupt_sector(struct inject_c *ic, sector_t s)
 {
@@ -128,7 +144,7 @@ static int check_corrupt_block(struct inject_c *ic, u32 blk)
 			return 1;
 	}
 	return 0;
-}
+}*/
 
 //from f2fs/node.c get_node_info
 //without reading the disk
@@ -205,7 +221,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 		if(bio_op(bio)==REQ_OP_WRITE) {
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
-			if(fst->block_to_dev(ic, bio))
+			if(ic->fs_t->block_to_dev(ic, bio))
 				return DM_MAPIO_KILL;
 		}
 
@@ -232,11 +248,11 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
-			if(fst->data_from_dev(ic, bio)!=DM_INJECT_NONE) {
+			if(ic->fs_t->data_from_dev(ic, bio)!=DM_INJECT_NONE) {
 				//we corrupted some data, can do accounting here
 				//but still pretend to be normal
 				return DM_ENDIO_DONE;
-			} else if(fst->block_from_dev(ic, bio)) {
+			} else if(ic->fs_t->block_from_dev(ic, bio)) {
 				*error = BLK_STS_IOERR;
 				return DM_ENDIO_DONE;
 			}
@@ -292,20 +308,36 @@ static void __exit dm_inject_exit(void)
 
 int dm_register_inject_fs(struct inject_fs_type *fs)
 {
-	fst = fs;
-	DMDEBUG("registered %s", fst->name);
+	spin_lock(&_fs_list_lock);
+	list_add_tail(&fs->list, &_fs_list);
+	spin_unlock(&_fs_list_lock);
+	DMDEBUG("registered %s", fs->name);
 	return 0;
 }
 EXPORT_SYMBOL(dm_register_inject_fs);
 
 int dm_unregister_inject_fs(struct inject_fs_type *fs)
 {
-	if(fst == fs)
-		fst = NULL;
+	spin_lock(&_fs_list_lock);
+	list_del(&fs->list);
+	spin_unlock(&_fs_list_lock);
 	DMDEBUG("unregistered %s", fs->name);
 	return 0;
 }
 EXPORT_SYMBOL(dm_unregister_inject_fs);
+
+struct inject_fs_type *dm_find_inject_fs(const char* name)
+{
+	struct inject_fs_type *tmp, *ret = NULL;
+	spin_lock(&_fs_list_lock);
+	list_for_each_entry(tmp, &_fs_list, list) {
+		if(strcmp(tmp->name, name)==0)
+			ret = tmp;
+	}
+	spin_unlock(&_fs_list_lock);
+	return ret;
+}
+EXPORT_SYMBOL(dm_find_inject_fs);
 
 module_init(dm_inject_init)
 module_exit(dm_inject_exit)

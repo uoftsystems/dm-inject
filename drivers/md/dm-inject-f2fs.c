@@ -31,6 +31,8 @@
 
 #define IS_F2FS(sb) ((sb) && ((sb)->s_magic == F2FS_SUPER_MAGIC))
 
+static struct inject_fs_type f2fs_fs;
+
 struct f2fs_context {
 	struct f2fs_sb_info *f2fs_sbi;
 	//prior to full mount, we can already get partial sbi
@@ -132,6 +134,7 @@ int f2fs_inject_ctr(struct inject_c *ic)
 	fsc->partial_sbi = false;
 	fsc->f2fs_sbi = NULL;
 	ic->context = fsc;
+	ic->fs_t = &f2fs_fs;
 	f2fs_get_partial_sb(ic);
 	return 0;
 }

@@ -67,6 +67,8 @@ struct inject_rec {
 	char inode_member[64];
 };
 
+struct inject_fs_type;
+
 // info about the target
 struct inject_c {
 	//context for device mapper
@@ -79,10 +81,14 @@ struct inject_c {
 	u32 *corrupt_block;
 	bool inject_enable;
 	struct list_head inject_list;
+	//fs-specific data
+	struct inject_fs_type *fs_t;
 	void *context;
 };
 
+//points to fs-specific operations in modules
 struct inject_fs_type {
+	struct list_head list;
 	char *name;
 	struct module *module;
 	int (*ctr)(struct inject_c *ic);
@@ -105,4 +111,5 @@ static inline struct super_block *get_bdev_sb(struct inject_c *ic)
 
 int dm_register_inject_fs(struct inject_fs_type *fs);
 int dm_unregister_inject_fs(struct inject_fs_type *fs);
+struct inject_fs_type *dm_find_inject_fs(const char* name);
 #endif
