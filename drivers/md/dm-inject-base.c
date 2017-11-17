@@ -223,9 +223,9 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			if(ic->fs_t->data_to_dev(ic, bio)!=DM_INJECT_NONE)
-				ret = DM_MAPIO_REMAPPED;
+				ret = max(ret, DM_MAPIO_REMAPPED);
 			else if(ic->fs_t->block_to_dev(ic, bio))
-				ret = DM_MAPIO_KILL;
+				ret = max(ret, DM_MAPIO_KILL);
 		}
 
 	if(ret==DM_MAPIO_SUBMITTED)
@@ -237,6 +237,8 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
+	int ret = DM_ENDIO_DONE;
+	*error = BLK_STS_OK;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 	//the sector count was advanced during the bio
@@ -254,13 +256,14 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 			if(ic->fs_t->data_from_dev(ic, bio)!=DM_INJECT_NONE) {
 				//we corrupted some data, can do accounting here
 				//but still pretend to be normal
-				return DM_ENDIO_DONE;
+				*error = max(*error, BLK_STS_OK);
+				ret = max(ret, DM_ENDIO_DONE);
 			} else if(ic->fs_t->block_from_dev(ic, bio)) {
-				*error = BLK_STS_IOERR;
-				return DM_ENDIO_DONE;
+				*error = max(*error, BLK_STS_IOERR);
+				ret = max(ret, DM_ENDIO_DONE);
 			}
 		}
-	return DM_ENDIO_DONE;
+	return ret;
 }
 
 static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
