@@ -107,8 +107,6 @@ static inline struct super_block *get_bdev_sb(struct inject_c *ic)
 	return NULL;
 }
 
-#define IS_EXT4(sb) ((sb) && ((sb)->s_magic == EXT4_SUPER_MAGIC))
-
 int dm_register_inject_fs(struct inject_fs_type *fs);
 int dm_unregister_inject_fs(struct inject_fs_type *fs);
 struct inject_fs_type *dm_find_inject_fs(const char* name);
