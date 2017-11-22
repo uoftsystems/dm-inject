@@ -1437,7 +1437,7 @@ DECLARE_EVENT_CLASS(f2fs__bio,
 	),
 
 	TP_printk("dev = (%d,%d)/(%d,%d), rw = %s(%s), %s, sector = %lld"
-		"blk_addr = 0x%llx, bsize = %u",
+		" blk_addr = 0x%llx, bsize = %u",
 		show_dev(__entry->target),
 		show_dev(__entry->dev),
 		show_bio_type(__entry->op, __entry->op_flags),
