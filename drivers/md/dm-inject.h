@@ -65,6 +65,11 @@ struct inject_rec {
 		};
 	};
 	char inode_member[64];
+	// EXT4 corruption parameters
+	long long unsigned number;
+	int size;
+	char field[256];
+	char path[256];
 };
 
 struct inject_fs_type;

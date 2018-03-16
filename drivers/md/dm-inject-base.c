@@ -197,10 +197,10 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 
 	//drop read-ahead?
-	if(bio->bi_opf & REQ_RAHEAD) {
-		DMDEBUG("%s fail RAHEAD", __func__);
-		return DM_MAPIO_KILL;
-	}
+//	if(bio->bi_opf & REQ_RAHEAD) {
+//		DMDEBUG("%s fail RAHEAD", __func__);
+//		return DM_MAPIO_KILL;
+//	}
 	//assign src_bdev to grab superblock if fs is mounted
 	//DMDEBUG("%s bio->bi_disk %p bd_super %p", __func__, bio->bi_disk, (bdget_disk(bio->bi_disk, 0))->bd_super);
 	if(bio->bi_disk != NULL) {
