@@ -2499,6 +2499,8 @@ static inline bool f2fs_readonly(struct super_block *sb)
 
 static inline bool f2fs_cp_error(struct f2fs_sb_info *sbi)
 {
+	printk("%sF2FS-fs::%s: CP_ERROR_FLAG set: %d\n",
+		KERN_INFO,  __func__, is_set_ckpt_flags(sbi, CP_ERROR_FLAG));
 	return is_set_ckpt_flags(sbi, CP_ERROR_FLAG);
 }
 
