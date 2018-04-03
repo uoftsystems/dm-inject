@@ -17,7 +17,7 @@
 #define DM_INJECT_EXT4_DATA_BITMAP		0x0004
 #define DM_INJECT_EXT4_INODE_BITMAP		0x0008
 #define DM_INJECT_EXT4_INDIRECT_DATA_MAP	0x0020
-#define	DM_INJECT_EXT4_EXTENT_TABLE		0x0040
+#define	DM_INJECT_EXT4_EXTENT			0x0040
 #define	DM_INJECT_EXT4_JOURNAL			0x0080
 #define	DM_INJECT_EXT4_EXTENDED_ATTRIBUTES	0x0100
 //Common FileSystem Structures
@@ -62,12 +62,14 @@ void initSB(struct inject_c *ic)
 	bgt_bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
 	if(bgt_bio_page == NULL){
 		DMDEBUG("bgt_bio_page is null");
+		return;
 	}
 
 	bgt_bio = bio_alloc(GFP_KERNEL, 1);
 
 	if(bgt_bio == NULL) {
 		DMDEBUG("bgt_bio is null");
+		return;
 	}
 
 	if(ic->dev == NULL){
@@ -77,6 +79,7 @@ void initSB(struct inject_c *ic)
 
 	if(ic->dev->bdev == NULL) {
 		DMDEBUG("ic device bdev not set, returning");
+		return;
 	}
 
 	bio_set_dev(bgt_bio, ic->dev->bdev);
@@ -94,7 +97,6 @@ void initSB(struct inject_c *ic)
 
 	bio_set_op_attrs(bgt_bio, REQ_OP_READ, REQ_META|REQ_PRIO|REQ_SYNC);
 	submit_bio_wait(bgt_bio);
-	DMDEBUG("%s():submit_bio done!",__func__);
 
 	bg_page_addr = (unsigned char*)page_address(bgt_bio->bi_io_vec->bv_page);
 	if(bg_page_addr == NULL){
@@ -102,14 +104,11 @@ void initSB(struct inject_c *ic)
 		bio_put(bgt_bio);
 		return;
 	}else {
-		DMDEBUG("bg_page_addr is not null");
 		memcpy(&(fsc->sb),bg_page_addr + 1024,sizeof(struct ext4_super_block));
 		blocks_count = fsc->sb.s_blocks_count_lo; // total number of blocks
 		blocks_per_group = fsc->sb.s_blocks_per_group;	// total number of blocks per group
 		fsc->numGroups = (blocks_count + blocks_per_group - 1) / blocks_per_group;
 		fsc->initSuper = true;
-		DMDEBUG("num of groups = %d fsc->s_log_groups_per_flex = %d fsc->s_desc_size = %d", fsc->numGroups, fsc->sb.s_log_groups_per_flex, fsc->sb.s_desc_size);
-		DMDEBUG("%s():s_inode_size = %d",__func__, fsc->sb.s_inode_size);
 	}
 	bio_put(bgt_bio);
 	return;
@@ -161,7 +160,6 @@ int initRootInode(struct inject_c *ic)
 
 	bio_set_dev(rinode_bio, ic->dev->bdev);
 
-	DMDEBUG("reading from bg_inode_table_bno = %d", fsc->gdt[0].bg_inode_table_bno);
 	rinode_bio->bi_iter.bi_sector = fsc->gdt[0].bg_inode_table_bno * 8;
 	rinode_bio->bi_end_io = NULL;
 	rinode_bio->bi_private = NULL;
@@ -175,7 +173,6 @@ int initRootInode(struct inject_c *ic)
 
 	bio_set_op_attrs(rinode_bio, REQ_OP_READ, REQ_META|REQ_PRIO|REQ_SYNC);
 	submit_bio_wait(rinode_bio);
-	DMDEBUG("%s():submit_rinode_bio done!",__func__);
 
 	rinode_page_addr = (unsigned char*)page_address(rinode_bio->bi_io_vec->bv_page);
 	if(rinode_page_addr == NULL){
@@ -183,7 +180,6 @@ int initRootInode(struct inject_c *ic)
 		//bio_put(bgt_bio);
 		return -ENOMEM;
 	}else {
-		DMDEBUG("bg_page_addr is not null");
 		    	if(rinode_page_addr == NULL) {
 	    			DMDEBUG("%s(): rinode_page_addr is null",__func__);
 	    			return -1;
@@ -480,17 +476,20 @@ bool processDirectoryBlocks(struct ext4_extent *ext_external,
 
 	if(ic->dev->bdev == NULL) {
 		DMDEBUG("ic device bdev not set, returning");
+		return true;
 	}
 
 	dir_bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
 	if(dir_bio_page == NULL){
 		DMDEBUG("bgt_bio_page is null");
+		return true;
 	}
 
 	dir_bio = bio_alloc(GFP_KERNEL, dir_bcount);
 
 	if(dir_bio == NULL) {
 		DMDEBUG("bgt_bio is null");
+		return true;
 	}
 	
 	bio_set_dev(dir_bio, ic->dev->bdev);
@@ -508,14 +507,18 @@ bool processDirectoryBlocks(struct ext4_extent *ext_external,
 
 	bio_set_op_attrs(dir_bio, REQ_OP_READ, REQ_META|REQ_PRIO|REQ_SYNC);
 	submit_bio_wait(dir_bio);
-	DMDEBUG("%s():submit_bio done!",__func__);
+	DMDEBUG("%s():submit_bio done!asdsad",__func__);
 
-	if(field != NULL || strlen(field) > 0){
+	DMDEBUG("%s():dirPath = %s",__func__,dirPath);
+	if(field != NULL && strlen(field) > 0){
+		DMDEBUG("%s():field not null",__func__);
 		field_offset = lookup_offset_ext4_dir_entry_2(field);
 		field_size = lookup_offset_ext4_dir_entry_2(field);
 		DMDEBUG("%s(): field = %s field offset = %d field size = %d",__func__, field, field_offset, field_size);
 	//	field_offset = 0;
 	//	field_size = 0;
+	}else {
+		DMDEBUG("%s():field is null",__func__);
 	}
 
 	dir_page_addr = (unsigned char*)page_address(dir_bio->bi_io_vec->bv_page);
@@ -537,52 +540,47 @@ bool processDirectoryBlocks(struct ext4_extent *ext_external,
 			dir.name[dir.name_len] = '\0';
 			if(!strncmp(dirPath, dir.name, strlen(dir.name)))
 			{
-				// FIXME shouldnt be comparing with 2.
-				if(dir.file_type == 2) {
-					currentDirectory = strsep(&dirPath,delem);
-					DMDEBUG("%s():Directory Found %s", __func__, currentDirectory);
-					if(dirPath == NULL) {
-						DMDEBUG("%s(): found directory dir_bstart = %lu, rec_len = %d, dir_len = %d", __func__, dir_bstart, rec_len, dir.rec_len);
-						// get the block number.
-						// get the offset.
-						// get the size.
-						// store the 3 values inside ext4_rec.
-						ext4_rec->block_num = dir_bstart + (rec_len / 4096);
-						ext4_rec->offset = ((rec_len + field_offset) % 4096);
-						if(field_size == 0) {
-							ext4_rec->size = dir.rec_len;
-						} else {
-							ext4_rec->size = field_size;
-						}
-						over = true;
-						DMDEBUG("%s():SEARCH COMPLETE %s", __func__, currentDirectory);
-						DMDEBUG("%s():set block_num %d offset %d size %d\n", __func__,ext4_rec->block_num, ext4_rec->offset, ext4_rec->size);
-				
-					}else {
-						DMDEBUG("%s():remaining path = %s",__func__, dirPath);
-						// fetch the inode structure using the inode number.
-						DMDEBUG("%s():reading inode number = %d",__func__, dir.inode);
-						next_inode_ptr = read_inode(dir.inode,ic, fsc);
-
-						if(next_inode_ptr == NULL) {
-							DMDEBUG("Detected Inode 0, returning");
-							return true;
-						}else {
-						// fsc, ic remain as is. 
-							// call recursively
-							DMDEBUG("%s():received inode with size = %d, link count = %d\n",__func__,next_inode_ptr->i_size_lo, next_inode_ptr->i_links_count);
-							DMDEBUG("%s(): calling getExtentBlocks()",__func__);
-
-							over = getExtentBlocks(next_inode_ptr, fsc, ic, ext4_rec, dirPath, field);
-							if(next_inode_ptr == NULL){
-								kfree(next_inode_ptr);
-								next_inode_ptr = NULL;
-							}
-							return over;
-						}
+				currentDirectory = strsep(&dirPath,delem);
+				DMDEBUG("%s():Directory Found %s", __func__, currentDirectory);
+				if(dirPath == NULL) {
+					DMDEBUG("%s(): found directory dir_bstart = %lu, rec_len = %d, dir_len = %d", __func__, dir_bstart, rec_len, dir.rec_len);
+					// get the block number.
+					// get the offset.
+					// get the size.
+					// store the 3 values inside ext4_rec.
+					ext4_rec->block_num = dir_bstart + (rec_len / 4096);
+					ext4_rec->offset = ((rec_len + field_offset) % 4096);
+					if(field_size == 0) {
+						ext4_rec->size = dir.rec_len;
+					} else {
+						ext4_rec->size = field_size;
 					}
+					over = true;
+					DMDEBUG("%s():SEARCH COMPLETE %s", __func__, currentDirectory);
+					DMDEBUG("%s():set block_num %d offset %d size %d\n", __func__,ext4_rec->block_num, ext4_rec->offset, ext4_rec->size);
+			
 				}else {
-					DMDEBUG("%s()File Match but not Directory %s", __func__, currentDirectory);
+					DMDEBUG("%s():remaining path = %s",__func__, dirPath);
+					// fetch the inode structure using the inode number.
+					DMDEBUG("%s():reading inode number = %d",__func__, dir.inode);
+					next_inode_ptr = read_inode(dir.inode,ic, fsc);
+
+					if(next_inode_ptr == NULL) {
+						DMDEBUG("Detected Inode 0, returning");
+						return true;
+					}else {
+					// fsc, ic remain as is. 
+						// call recursively
+						DMDEBUG("%s():received inode with size = %d, link count = %d\n",__func__,next_inode_ptr->i_size_lo, next_inode_ptr->i_links_count);
+						DMDEBUG("%s(): calling getExtentBlocks()",__func__);
+
+						over = getExtentBlocks(next_inode_ptr, fsc, ic, ext4_rec, dirPath, field);
+						if(next_inode_ptr == NULL){
+							kfree(next_inode_ptr);
+							next_inode_ptr = NULL;
+						}
+						return over;
+					}
 				}
 				bio_put(dir_bio);
 				return over;
@@ -592,6 +590,9 @@ bool processDirectoryBlocks(struct ext4_extent *ext_external,
 			rec_len += dir.rec_len;
 		}
 		DMDEBUG("%s():could not find a match for %s",__func__, currentDirectory);
+		ext4_rec->block_num = 0;
+		ext4_rec->offset = 0;
+		ext4_rec->size = 0;
 		// if no path was found, return False.
 		bio_put(dir_bio);
 		return over;
@@ -639,7 +640,7 @@ bool getExtentBlocks(struct ext4_inode *inode, struct ext4_context *fsc, struct 
 //			DMDEBUG("%s():PTR %p",__func__, (void *)&root_inode.i_block[i*3]);
 			memcpy(ext_external, &root_inode.i_block[i * 3] ,sizeof(struct ext4_extent));
 		//	DMDEBUG("external first logical block %d length %d physical block hi %d physical block low %d", ext_external.ee_block, ext_external.ee_len, ext_external.ee_start_hi, ext_external.ee_start_lo);
-			DMDEBUG("%s(): calling processDirectoryBlocks ",__func__);
+			DMDEBUG("%s(): calling processDirectoryBlocks with path = %s",__func__, path);
 			over = processDirectoryBlocks(ext_external, fsc, ic, ext4_rec , path, field);
 			if(over) {
 				if(ext_external != NULL) {
@@ -659,6 +660,117 @@ bool getExtentBlocks(struct ext4_inode *inode, struct ext4_context *fsc, struct 
 	// TODO
 	// if eh_depth > 0, subsiquent extents point to non leaf nodes.
 	// read all entries in ext4_extent_idx
+}
+
+/*	return inode number corresponding to the path.
+*/
+int get_inode_number_of_path(struct inject_c *ic, 
+	struct inject_rec *ext4_rec, struct ext4_context *fsc)
+{
+	struct bio *bio;
+	struct page *bio_page;
+	unsigned char *page_addr;
+	int bno, offset, size, inode_number, file_name_length, sz;
+	char *fileName;
+
+	// first call already created function that initializes ext4_rec's
+	// block number, offset and size fields to the directory structure
+	char path[1024];// = kmalloc( (sizeof(char) * (strlen(ext4_rec->path) + 1)), GFP_KERNEL);
+	strcpy(path , ext4_rec->path + 1);
+	DMDEBUG("%s():path = %s",__func__,path);
+	// this will initialize block number, offset and size to point to
+	// ext4_dir_entry2 structure of the file whose extent needs to be traversed
+	getExtentBlocks(&fsc->root_inode, fsc, ic, ext4_rec , path, NULL);
+	DMDEBUG("%s():bno = %u offset = %d size = %d", __func__, ext4_rec-> block_num, ext4_rec-> offset, ext4_rec-> size);
+	// now, using the 3 parameters, read inode number and return.
+
+	bno = ext4_rec->block_num;
+	offset = ext4_rec->offset;
+	size = ext4_rec->size;
+
+	if(bno == 0 && offset == 0 && size == 0) {
+		DMDEBUG("%s(): path %s not found", __func__, path);
+		return -1;
+	}
+
+	bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
+	if(bio_page == NULL){
+		DMDEBUG("bgt_bio_page is null");
+		return -1;
+	}
+
+	bio = bio_alloc(GFP_KERNEL, 1);
+
+	if(bio == NULL) {
+		DMDEBUG("bgt_bio is null");
+		return -1;
+	}
+
+	if(ic->dev == NULL){
+		DMDEBUG("ic device not set, returning");
+		return -1;
+	}
+
+	if(ic->dev->bdev == NULL) {
+		DMDEBUG("ic device bdev not set, returning");
+		return -1;
+	}
+
+	bio_set_dev(bio, ic->dev->bdev);
+	bio->bi_iter.bi_sector = bno * 8;	// XXX changes required here
+	bio->bi_end_io = NULL;
+	bio->bi_private = NULL;
+
+	sz = bio_add_page(bio, bio_page, PAGE_SIZE, 0);
+	
+	if(sz < PAGE_SIZE) {
+		DMDEBUG("%s failed bio_add_page size allocated = %d",__func__, sz);
+		bio_put(bio);
+		return -1;
+	}
+
+	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|REQ_PRIO|REQ_SYNC);
+	submit_bio_wait(bio);
+	DMDEBUG("%s():submit_bio done!",__func__);
+
+
+	page_addr = (unsigned char*)page_address(bio->bi_io_vec->bv_page);
+	if(page_addr == NULL){
+		DMDEBUG("%s():page_addr assigned null", __func__);
+		bio_put(bio);
+		return -1;
+	}else {
+		// read the first integer value in struct_dir_entry2
+		// which corresponds to the inode number of the file.
+		memcpy(&inode_number, page_addr + offset , sizeof(int));
+	//	memcpy(&file_name_length, page_addr + offset + sizeof(int) , sizeof(int));
+	//	fileName = kmalloc(sizeof(char) * (file_name_length + 1), GFP_KERNEL);
+	//	memcpy(fileName, page_addr + offset + (2 * sizeof(int)), file_name_length);
+	//	DMDEBUG("%s():Inode number %d found for filename %s", __func__,inode_number, fileName);
+		DMDEBUG("%s():Inode number %d found", __func__,inode_number);
+	//	kfree(fileName);
+		return inode_number;
+	}
+}
+
+/*
+	Initialize block Number, offset and size parameters corresponding to
+	the file path and extent number.
+*/
+
+void getExtentLocation(struct inject_c *ic, struct inject_rec *ext4_rec, 
+				struct ext4_context *fsc)
+{
+	int inode_number;
+	struct ext4_inode *inode;
+
+	DMDEBUG("%s():path of file = %s, extent number = %llu",__func__, ext4_rec->path, ext4_rec->number);
+	inode_number = get_inode_number_of_path(ic,ext4_rec,fsc);
+	DMDEBUG("%s():recieved inode number %d", __func__,inode_number);
+	//inode = read_inode(inode_number);
+	
+	// read extent values from inode structure.
+
 }
 
 /* given a directory path and a field, the function stores the on-disk block
@@ -715,6 +827,13 @@ void getOnDiskLocation(struct inject_c *ic, struct inject_rec *ext4_rec, struct 
 	DMDEBUG("%s():begin",__func__);
 	if(ext4_rec->type == DM_INJECT_EXT4_DIRECTORY) {
 		getDirectoryLocation(ic, ext4_rec, fsc);
+	} else if(ext4_rec->type == DM_INJECT_EXT4_EXTENT) {
+		if(ext4_rec->path != NULL) {
+			DMDEBUG("%s():path = %s",__func__, ext4_rec->path);
+			getExtentLocation(ic, ext4_rec, fsc);
+		}else {
+			DMDEBUG("%s():path is null, not calling getExtentLocation",__func__);
+		}
 	}
 	DMDEBUG("%s():end",__func__);
 }
@@ -725,7 +844,7 @@ void getOnDiskLocation(struct inject_c *ic, struct inject_rec *ext4_rec, struct 
 
 bool deriveOnDiskLocation(int new_type)
 {
-	return (new_type & DM_INJECT_EXT4_DIRECTORY);
+	return (new_type & (DM_INJECT_EXT4_DIRECTORY | DM_INJECT_EXT4_EXTENT));
 }
 
 int ext4_inject_ctr(struct inject_c *ic)
@@ -765,13 +884,9 @@ int ext4_inject_ctr(struct inject_c *ic)
 
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(deriveOnDiskLocation(tmp->type)){
-			DMDEBUG("%s():deriveOnDiskLocation enabled", __func__);
 			getOnDiskLocation(ic,tmp,fsc);				
-		}else {
-			DMDEBUG("%s():deriveOnDiskLocation returned false", __func__);
-		}
+		}	
 	}
-	DMDEBUG("%s END", __func__);
 	return 0;
 }
 
@@ -828,8 +943,7 @@ long long unsigned getNumber(char *cur_arg)
 bool hasOffset(int new_type)
 {
 	return (new_type & ( DM_INJECT_EXT4_BLOCK |  DM_INJECT_EXT4_DATA_BITMAP |
-		 DM_INJECT_EXT4_INODE_BITMAP | DM_INJECT_EXT4_INDIRECT_DATA_MAP |
-		DM_INJECT_EXT4_EXTENT_TABLE) );
+		 DM_INJECT_EXT4_INODE_BITMAP | DM_INJECT_EXT4_INDIRECT_DATA_MAP));
 }
 
 // return true if new_type is of any of the following types
@@ -837,12 +951,17 @@ bool hasOffset(int new_type)
 bool hasField(int new_type)
 {
 	return (new_type & ( DM_INJECT_EXT4_SB | DM_INJECT_EXT4_INODE 
-	| DM_INJECT_EXT4_JOURNAL | DM_INJECT_EXT4_EXTENDED_ATTRIBUTES) );
+	| DM_INJECT_EXT4_JOURNAL | DM_INJECT_EXT4_EXTENDED_ATTRIBUTES ));
 }
 
 bool has2Fields(int new_type)
 {
 	return (new_type & ( DM_INJECT_EXT4_DIRECTORY ));
+}
+
+bool hasPath(int new_type)
+{
+	return (new_type & DM_INJECT_EXT4_EXTENT);
 }
 
 bool hasOffsetAndField(int new_type)
@@ -861,7 +980,7 @@ bool hasOffsetAndField(int new_type)
 	 - ibmapX[offset]	inode bitmap
 	 - itableX[offset]	inode table
 	 - idmap[offset]	indirect block (probably not required for EXT4, writing here for backward compatibility)
-	 - etbX[offset] 	extent table block
+	 - extentX[offset] 	extent number and offset
 	 - **jX[field]		journal block
 	 - dir[field][field]	directory block 
 	 - exattrX[field]	extended attributes
@@ -907,10 +1026,9 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			new_type = DM_INJECT_EXT4_INODE_BITMAP;
 		} else if(isTypeStr(&cur_arg,"idmap")) {
 			new_type = DM_INJECT_EXT4_INDIRECT_DATA_MAP;
-		} else if(isTypeStr(&cur_arg,"etb")) { 
-			new_type = DM_INJECT_EXT4_EXTENT_TABLE;
+		} else if(isTypeStr(&cur_arg,"extent")) { 
+			new_type = DM_INJECT_EXT4_EXTENT;
 		} else if(isTypeStr(&cur_arg,"dir")) {
-			DMDEBUG("dir detected");
 			new_type = DM_INJECT_EXT4_DIRECTORY;
 		} else if(isTypeStr(&cur_arg,"exattr")) {
 		 	new_type = DM_INJECT_EXT4_EXTENDED_ATTRIBUTES;
@@ -935,6 +1053,9 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		} else if(hasOffsetAndField(new_type)) {
 			DMDEBUG("%s():new_type = %d hasOffsetAndField",__func__, new_type);
 			sscanf(cur_arg, "%llu[%d][%s]%*c",&number, &offset,field);
+		} else if(hasPath(new_type)) {
+			sscanf(cur_arg, "%llu[%s]%*c",&number, path);
+			path[strlen(path)-1] = '\0';
 		} else if(has2Fields(new_type)) {
 			DMDEBUG("%s():new_type = %d has2Fields",__func__, new_type);
 			cur_arg++;
