@@ -41,6 +41,7 @@ struct ext4_context {
 };
 
 bool getExtentBlocks(struct ext4_inode *inode, struct ext4_context *fsc, struct inject_c *ic, struct inject_rec *ext4_rec, char *path, char *field);
+struct bio* read_block(sector_t bno, struct inject_c *ic);
 
 void initSB(struct inject_c *ic)
 {
@@ -670,8 +671,7 @@ int get_inode_number_of_path(struct inject_c *ic,
 	struct bio *bio;
 	struct page *bio_page;
 	unsigned char *page_addr;
-	int bno, offset, size, inode_number, file_name_length, sz;
-	char *fileName;
+	int bno, offset, size, inode_number, sz;
 
 	// first call already created function that initializes ext4_rec's
 	// block number, offset and size fields to the directory structure
@@ -743,15 +743,11 @@ int get_inode_number_of_path(struct inject_c *ic,
 		// read the first integer value in struct_dir_entry2
 		// which corresponds to the inode number of the file.
 		memcpy(&inode_number, page_addr + offset , sizeof(int));
-	//	memcpy(&file_name_length, page_addr + offset + sizeof(int) , sizeof(int));
-	//	fileName = kmalloc(sizeof(char) * (file_name_length + 1), GFP_KERNEL);
-	//	memcpy(fileName, page_addr + offset + (2 * sizeof(int)), file_name_length);
-	//	DMDEBUG("%s():Inode number %d found for filename %s", __func__,inode_number, fileName);
 		DMDEBUG("%s():Inode number %d found", __func__,inode_number);
-	//	kfree(fileName);
 		return inode_number;
 	}
 }
+
 
 /*
 	Initialize block Number, offset and size parameters corresponding to
@@ -761,16 +757,92 @@ int get_inode_number_of_path(struct inject_c *ic,
 void getExtentLocation(struct inject_c *ic, struct inject_rec *ext4_rec, 
 				struct ext4_context *fsc)
 {
-	int inode_number;
+	int inode_number,i,j,off;
 	struct ext4_inode *inode;
+	struct ext4_extent_header eh, temp_eh;
+	struct ext4_extent_idx e_internal;
+	struct ext4_extent e_leaf;
+	unsigned char *ptr;
+	struct bio *bio;
+
+	int extentNumber = 0;
+
+	if(ext4_rec->path == NULL){
+		return;
+	}
 
 	DMDEBUG("%s():path of file = %s, extent number = %llu",__func__, ext4_rec->path, ext4_rec->number);
 	inode_number = get_inode_number_of_path(ic,ext4_rec,fsc);
 	DMDEBUG("%s():recieved inode number %d", __func__,inode_number);
-	//inode = read_inode(inode_number);
+	inode = read_inode(inode_number, ic, fsc);
 	
-	// read extent values from inode structure.
+	DMDEBUG("%s():block number to corrupt = %d",__func__,ext4_rec->block_num);
+	
+	if(inode == NULL) {
+		DMDEBUG("%s():could not read inode",__func__);
+		return;
+	}
+	if(inode->i_block == NULL) {
+		DMDEBUG("%s():inode_i_block is null",__func__);
+		return;
+	}
+	memcpy(&eh,inode->i_block,sizeof(struct ext4_extent_header));
+//	inode->i_block[0];
+	DMDEBUG("%s():magic %d entries %d max %d depth %d",__func__, eh.eh_magic, eh.eh_entries, eh.eh_max, eh.eh_depth);
+	DMDEBUG("%s():block num %d offset %d size %d",__func__, ext4_rec->block_num, ext4_rec->offset, ext4_rec->size);
 
+	if(ext4_rec->number <= eh.eh_entries) {
+		// CORRUPT EXTENT POSITION SET, RETURN!
+		ext4_rec->offset += lookup_offset_ext4_inode("i_block")	+ ((ext4_rec->number) * 12);
+		ext4_rec->size = 12;
+		DMDEBUG("%s():CORRUPT EXTENT POSITION SET, RETURN!",__func__);
+		return;
+	}else {
+		ext4_rec->number -= eh.eh_entries;
+	}
+	DMDEBUG("%s(): skipped %d extents, checking for %lu'th extent in leaf nodes", __func__, eh.eh_entries+1, ext4_rec->number);
+	if(eh.eh_depth > 0) {
+		for(i = 1 ; i <= eh.eh_entries ; i++) {
+			DMDEBUG("%s():NON-LEAF scanning extent %d",__func__, i);
+			off = lookup_offset_ext4_inode("i_block");
+			ptr = (unsigned char *)inode;
+			memcpy(&e_internal,ptr + off + (i*(sizeof(struct ext4_extent_idx))),sizeof(struct ext4_extent_idx));
+			DMDEBUG("%s() block = %d leaf_low = %d leaf_hi = %d",__func__, e_internal.ei_block, e_internal.ei_leaf_lo, e_internal.ei_leaf_hi);
+
+			// read next indirect block.
+
+			bio = read_block(e_internal.ei_leaf_lo,ic);	
+			if(bio == NULL) {
+				DMDEBUG("%s():bio returned was null",__func__);
+				return;
+			}else {
+				DMDEBUG("%s():bio block was read successfully", __func__);
+			}
+			ptr = (unsigned char*)page_address(bio->bi_io_vec->bv_page);
+			if(ptr == NULL) {
+				DMDEBUG("%s():Could not read extent block, returning",__func__);
+				return;
+			}
+
+			// read header of indirect block first:
+			memcpy(&temp_eh, ptr, sizeof(struct ext4_extent_header));
+			DMDEBUG("%s():magic %d entries %d max %d depth %d",__func__, temp_eh.eh_magic, temp_eh.eh_entries, temp_eh.eh_max, temp_eh.eh_depth);
+
+			if(temp_eh.eh_depth == 0) {
+				ext4_rec->block_num = e_internal.ei_leaf_lo;
+				ext4_rec->size = 12;
+				ext4_rec->offset = ext4_rec->number * 12;
+				DMDEBUG("SET EXTENT FOR CORRUPTION : block %d, offset %d, size %d", ext4_rec->block_num, ext4_rec->offset, ext4_rec->size);
+				return;
+			}
+		}
+	}
+	// if header has level 1, read intermediate nodes in ext4_extent_header.
+	// free inode after reading
+	if(inode != NULL) {
+		kfree(inode);
+		inode = NULL;
+	}
 }
 
 /* given a directory path and a field, the function stores the on-disk block
@@ -828,12 +900,7 @@ void getOnDiskLocation(struct inject_c *ic, struct inject_rec *ext4_rec, struct 
 	if(ext4_rec->type == DM_INJECT_EXT4_DIRECTORY) {
 		getDirectoryLocation(ic, ext4_rec, fsc);
 	} else if(ext4_rec->type == DM_INJECT_EXT4_EXTENT) {
-		if(ext4_rec->path != NULL) {
-			DMDEBUG("%s():path = %s",__func__, ext4_rec->path);
-			getExtentLocation(ic, ext4_rec, fsc);
-		}else {
-			DMDEBUG("%s():path is null, not calling getExtentLocation",__func__);
-		}
+		getExtentLocation(ic, ext4_rec, fsc);
 	}
 	DMDEBUG("%s():end",__func__);
 }
@@ -1536,9 +1603,12 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 	return;
 }
 
-struct bio* read_block(sector_t bno, struct bio *bio, struct page *bio_page, struct inject_c *ic)
+struct bio* read_block(sector_t bno, struct inject_c *ic)
 {
 	int sz;
+	
+	struct bio *bio;
+	struct page *bio_page;
 
 	DMDEBUG("%s(): reading sector %lu",__func__,bno * 8);
 	bio_page = alloc_page(GFP_NOIO);
@@ -1567,47 +1637,26 @@ struct bio* read_block(sector_t bno, struct bio *bio, struct page *bio_page, str
 
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META | REQ_PRIO | REQ_NOWAIT);
 
-	submit_bio(bio);
+	submit_bio_wait(bio);
 	return bio;
 }
 
-static void inode_end_return(struct bio *bio)
-{
-	struct ext4_inode root_inode;
-	char * bg_page_addr;
-
-	if(bio == NULL) {
-		DMDEBUG("bio null");
+void processExtent(struct ext4_context *fsc, sector_t bnum, char *page_addr, 
+	struct inject_rec *ext4_ic, struct bio *bio, struct inject_c *ic) {	
+	if(ext4_ic == NULL){
+		DMDEBUG("%s(): injection context not initialized, returning", __func__);
 		return;
-	}else {
-		DMDEBUG("%s():page read done! status = %d",__func__, (bio->bi_status) );
-		if(bio->bi_io_vec == NULL) {
-			DMDEBUG("%s():bio->bi_io_vec is NULL",__func__);
-			return;
-		}
-		if(bio->bi_io_vec->bv_page == NULL) {
-			DMDEBUG("%s():bio->bi_io_vec->bv_page is NULL", __func__);
-			return;
-		}
-		bg_page_addr = (unsigned char*)page_address(bio->bi_io_vec->bv_page);
 	}
-	DMDEBUG("%s():HERE",__func__);
 
-//	
-	// copy second inode, which is the root directory of ext4 file system
-		if(bg_page_addr == NULL) {
-			DMDEBUG("%s(): bg_page_addr is null",__func__);
-			return;
-		}
-		if(bg_page_addr + 256 == NULL) {
-			DMDEBUG("%s(): bg page addr + size is null",__func__);
-			return;
-		} 
-		memcpy(&root_inode, bg_page_addr + 256, sizeof(struct ext4_inode));
-		DMDEBUG("i_links_count = %d i_blocks_lo = %d\n",
-				root_inode.i_links_count, root_inode.i_blocks_lo);
+	if(bnum != ext4_ic->block_num){
+		DMDEBUG("%s(): read block %lu, NEED BLOCK %d DO NOT FUZZ", __func__, bnum, ext4_ic->block_num);
+		return;
+	}else{
+		DMDEBUG("bnumber match, corrupting bnumber %lu", bnum);
+	}
 
-	return;
+	DMDEBUG("%s(): corrupting block number %lu offset %d size %d", __func__, bnum, ext4_ic->offset, ext4_ic->size);
+	corrupt_bio(bio, ext4_ic->offset, ext4_ic->size);
 }
 
 void processDirectory(struct ext4_context *fsc, sector_t bnum, char *page_addr, 
@@ -1667,8 +1716,10 @@ bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *b
 			processIBMap(fsc,bnum,my_page_addr,tmp,bio,ic);	
 		}
 		if(tmp->type == DM_INJECT_EXT4_DIRECTORY) {
-			DMDEBUG("%s(): PROCESS DIR",__func__);
 			processDirectory(fsc,bnum,my_page_addr,tmp,bio,ic);
+		}
+		if(tmp->type == DM_INJECT_EXT4_EXTENT) {
+			processExtent(fsc,bnum,my_page_addr,tmp,bio,ic);
 		}
 	}
 	DMDEBUG("%s():EXIT",__func__);
