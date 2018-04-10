@@ -757,15 +757,12 @@ int get_inode_number_of_path(struct inject_c *ic,
 void getExtentLocation(struct inject_c *ic, struct inject_rec *ext4_rec, 
 				struct ext4_context *fsc)
 {
-	int inode_number,i,j,off;
+	int inode_number,i,off;
 	struct ext4_inode *inode;
 	struct ext4_extent_header eh, temp_eh;
 	struct ext4_extent_idx e_internal;
-	struct ext4_extent e_leaf;
 	unsigned char *ptr;
 	struct bio *bio;
-
-	int extentNumber = 0;
 
 	if(ext4_rec->path == NULL){
 		return;
@@ -800,7 +797,7 @@ void getExtentLocation(struct inject_c *ic, struct inject_rec *ext4_rec,
 	}else {
 		ext4_rec->number -= eh.eh_entries;
 	}
-	DMDEBUG("%s(): skipped %d extents, checking for %lu'th extent in leaf nodes", __func__, eh.eh_entries+1, ext4_rec->number);
+	DMDEBUG("%s(): skipped %d extents, checking for %llu'th extent in leaf nodes", __func__, eh.eh_entries+1, ext4_rec->number);
 	if(eh.eh_depth > 0) {
 		for(i = 1 ; i <= eh.eh_entries ; i++) {
 			DMDEBUG("%s():NON-LEAF scanning extent %d",__func__, i);
@@ -930,6 +927,7 @@ int ext4_inject_ctr(struct inject_c *ic)
 	ic->context = fsc;
 	fsc->initSuper = false;
 	initSB(ic);
+	DMDEBUG("%s():initSB done",__func__);
 
 	if(fsc->initSuper == false){
 		DMDEBUG("unable to initialize Super, returning");
@@ -943,16 +941,20 @@ int ext4_inject_ctr(struct inject_c *ic)
 
 	blocks_per_group = fsc->sb.s_blocks_per_group;
 	ret = initGDT(ic, (blocks_per_group + 1) * 8);
+	DMDEBUG("%s():initGDT done",__func__);
 	if(ret)
 		return ret;
 	ret = initRootInode(ic);
+	DMDEBUG("%s():initRootInode done",__func__);
 	if(ret)
 		return ret;
 
 	list_for_each_entry(tmp, &ic->inject_list, list) {
 		if(deriveOnDiskLocation(tmp->type)){
 			getOnDiskLocation(ic,tmp,fsc);				
-		}	
+		}else {
+			DMDEBUG("onDiskLocation fuzzing not required");
+		}
 	}
 	return 0;
 }
@@ -1345,7 +1347,7 @@ void processSB(struct ext4_context *fsc, sector_t bnum, char *page_addr, struct 
 	char field[256] = {'\0'};
 
 	isSparse = fsc->sb.s_feature_ro_compat & EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER;
-	DMDEBUG("%s(): corrupting SB", __func__);
+//	DMDEBUG("%s(): corrupting SB", __func__);
 	
 	if(fsc->initSuper == false){ // wait to fill sb with block 0
 		DMINFO("superblock uninitialized in context. please start dminject");
@@ -1359,23 +1361,27 @@ void processSB(struct ext4_context *fsc, sector_t bnum, char *page_addr, struct 
 
 	number = ext4_ic->number;
 	if(ext4_ic->field != NULL){
-		DMDEBUG("ext4_ic->field is not null");
+//	DMDEBUG("ext4_ic->field is not null");
 		memcpy(field, ext4_ic->field, strlen(ext4_ic->field));
 	}else{
-		DMDEBUG("ext4_ic->field is null");
+		DMDEBUG("ext4_ic->field is null, return");
+		return;
 	}
 	offset = lookup_offset_ext4_super_block(field);
 	size = lookup_size_ext4_super_block(field);
 
 	// sb1[s_free_inodes_count]
-	DMDEBUG("%s():XXXX number = %lu, field = %s, offset = %d\n",__func__, number, field, offset);	
+//	DMDEBUG("%s():XXXX number = %lu, field = %s, offset = %d\n",__func__, number, field, offset);	
 	if(number == getSBNumber(bnum,isSparse, fsc->sb.s_blocks_per_group)) {
+		DMDEBUG("%s():enable corruption for block number %lu",__func__, bnum);
 		DMDEBUG("%s():corrupting block %lu which is the %lu'th block\n",__func__,bnum, number);
 		// use offset + 1024 only for block 0.
 		if(number == 1)
 			corrupt_bio(bio, offset + 1024, size);
 		else
 			corrupt_bio(bio, offset , size);
+	} else {
+		DMDEBUG("%s():skip corruption for block number %lu",__func__, bnum);
 	}
 }
 
@@ -1587,10 +1593,12 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 	block_size = get_block_size(fsc->sb.s_log_block_size);
 	
 	boffset = (inode_table_start * block_size) + 
-		(((inumber -1) % inodes_per_group) * sizeof(struct ext4_inode));
+		(((inumber -1) % inodes_per_group) * fsc->sb.s_inode_size);
 
 	if(boffset / block_size == bnum) {
 		offset = boffset % block_size;
+		DMDEBUG("%s():enable corruption for block number %lu",__func__, bnum);
+		DMDEBUG("%s():corrupting block %lu at offset %d which is the %lu'th block\n",__func__,bnum, offset, number);
 		memcpy(&my_inode, bio + offset, sizeof(struct ext4_inode));
 		if(strlen(field) == 0) {
 			corrupt_bio(bio, offset, sizeof(struct ext4_inode));	
@@ -1599,6 +1607,8 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 			offset_of_field = lookup_offset_ext4_inode(field);
 			corrupt_bio(bio, offset + offset_of_field, size_of_field);
 		}
+	}else {
+		DMDEBUG("%s():skip corruption for block number %lu",__func__, bnum);
 	}
 	return;
 }
@@ -1729,6 +1739,7 @@ bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *b
 bool ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
 //	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
+	DMDEBUG("WRITE TO BLOCK %lu",sec / 8);
 	return false;
 }
 
