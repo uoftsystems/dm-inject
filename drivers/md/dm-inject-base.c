@@ -254,38 +254,46 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	int ret = DM_ENDIO_DONE;
 	struct bio_vec *bvec;
 	unsigned int iter;
+	int ret;
+
+	/* Initially, no error has occurred. */
 	*error = BLK_STS_OK;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
-	//the sector count was advanced during the bio
-	sector_t sec = bio->bi_iter.bi_sector-8;
-
 	//intercept and inject F2FS read requests
 	//data from block device travelling to memory
-	if(ic->inject_enable)
-		if(bio_op(bio)==REQ_OP_READ) {
+	if (ic->inject_enable) {
+		if (bio_op(bio) == REQ_OP_READ) {
+			//the sector count was advanced during the bio
+			//sector_t sec = bio->bi_iter.bi_sector - 8;
+
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
 			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
-				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
+				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page,
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
-				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT) - 8;
-				if(ic->fs_t->data_from_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE) {
-					//we corrupted some data, can do accounting here
-					//but still pretend to be normal
-					*error = max(*error, BLK_STS_OK);
-					ret = max(ret, DM_ENDIO_DONE);
-				} else if(ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
-					*error = max(*error, BLK_STS_IOERR);
-					ret = max(ret, DM_ENDIO_DONE);
+				sector_t sec = bio->bi_iter.bi_sector +
+                                        (iter >> SECTOR_SHIFT) - 8;
+
+				/*
+				 * In case of data corruption, treat it as a regular I/O.
+				 * Otherwise, check if the operation must be dropped.
+				 */
+				ret = ic->fs_t->data_from_dev(ic, bio, bvec, sec);
+				DMDEBUG("%s ret: %d sec: %lu", __func__, ret, sec);
+				if (!ret && ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
+					DMDEBUG("%s error sec: %lu", __func__, sec);
+					*error = BLK_STS_IOERR;
+					break;
 				}
 			}
 		}
-	return ret;
+	}
+
+	return DM_ENDIO_DONE;
 }
 
 static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
