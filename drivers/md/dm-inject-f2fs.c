@@ -199,10 +199,12 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		ic->corrupt_block = NULL;
 	}
 
-	for (i=0;i<ic->num_corrupt;i++) {
-		char *cur_arg = dm_shift_arg(as);
-		int new_type = DM_INJECT_BLOCK;
+	for (i = 0; i < ic->num_corrupt; ++i) {
+		const char *cur_arg = dm_shift_arg(as);
+		int new_type = DM_INJECT_F2FS_BLOCK;
 		int new_op = -1;
+		bool corrupt_flag = false;
+
 		// R or W denotes only corrupting on one type of access
 		if (strchr(cur_arg,'R') == cur_arg) {
 			cur_arg++;
@@ -211,6 +213,7 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			cur_arg++;
 			new_op = REQ_OP_WRITE;
 		}
+
 		// meta blocks
 		if (strcmp(cur_arg, "cp") == 0) {
 			cur_arg += 2;
@@ -233,6 +236,7 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 				cur_arg++;
 				new_type = DM_INJECT_F2FS_DATA;
 			}
+
 			// the number
 			// offset within data node
 			if (new_type == DM_INJECT_F2FS_DATA && sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) == 2) {
@@ -249,14 +253,19 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 				return -1;
 			}
 		}
+
 		//ic->corrupt_sector[i] = tmp;
 		//DMDEBUG("%s corrupt sector %d", __func__, ic->corrupt_sector[i]);
 		//ic->corrupt_block[i] = tmp;
 		//add to list
-		struct inject_rec *new_block = kzalloc(sizeof(*new_block), GFP_NOIO);
+		new_block = kzalloc(sizeof(struct inject_rec), GFP_NOIO);
+		if (!new_block) {
+			error = "Memory allocation error!";
+			return -ENOMEM;
+		}
 		new_block->type = new_type;
 		new_block->op = new_op;
-		if (new_block->type == DM_INJECT_SECTOR) {
+		new_block->corruption_enabled = corrupt_flag;
 			new_block->sector_num = tmp;
 			DMDEBUG("%s corrupt %s sector %d", __func__, RW(new_block->op), new_block->sector_num);
 		} else if (new_block->type == DM_INJECT_BLOCK) {
@@ -282,6 +291,7 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			tmp2 = -1;
 			DMDEBUG("%s corrupt %s data of inode %d off %d", __func__, RW(new_block->op), new_block->inode_num, new_block->offset);
 		}
+
 		list_add_tail(&new_block->list, &ic->inject_list);
 	}
 
@@ -407,13 +417,16 @@ bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_F2FS_CP
-			&& (tmp->op < 0 || tmp->op == op)) {
+		if (tmp->type == DM_INJECT_F2FS_CP && (tmp->op < 0 || tmp->op == op)
+		    && !tmp->corruption_enabled) {
 			DMDEBUG("%s CORRUPT %s cp", __func__, RW(op));
 			return true;
 		}
 	}
+
+
 	return false;
 }
 
