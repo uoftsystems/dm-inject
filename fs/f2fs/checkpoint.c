@@ -1445,7 +1445,7 @@ int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	if (err) {
 		f2fs_msg(sbi->sb, KERN_NOTICE,
 			"Checkpoint version (%llx) exited with an error: %d",
-			ckpt_version, err);
+			ckpt_ver, err);
 		release_discard_addrs(sbi);
 	}
 	else

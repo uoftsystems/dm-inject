@@ -1151,7 +1151,30 @@ TRACE_EVENT(f2fs_lookup_start,
 	TP_printk("dev = (%d,%d), pino = %lu, name:%s, flags:%u",
 		show_dev_ino(__entry),
 		__entry->name,
-		__entry->flags)
+		__entry->flags
+        )
+);
+
+TRACE_EVENT(f2fs_target_dentry,
+
+        TP_PROTO(unsigned long pos, int val),
+
+        TP_ARGS(pos, val),
+
+        TP_STRUCT__entry(
+                __field(unsigned long,  index)
+                __field(int,    value)
+        ),
+
+        TP_fast_assign(
+                __entry->index	= pos;
+                __entry->value	= val;
+        ),
+
+        TP_printk("index: %lu value: %d",
+                  __entry->index,
+                  __entry->value
+        )
 );
 
 TRACE_EVENT(f2fs_lookup_end,
