@@ -1,25 +1,26 @@
 /*
-
+ *
  * dm-inject device mapper target
  * referencing dm-linear, dm-zero etc
  */
 
 #include "dm-inject.h"
+
 #define DM_MSG_PREFIX "inject"
+
 static LIST_HEAD(_fs_list);
 static DEFINE_SPINLOCK(_fs_list_lock);
 
 // Constructor
 static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
+	int ret = 0;
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
-	int tmp2 = -1;
-	char tmp_str[64];
+	char dummy, tmp_str[64];
 	struct dm_arg_set as;
 	const char *devname;
-	char dummy;
-	int i, ret = 0;
+	struct inject_fs_type *inject_fs_type;
 
 	as.argc = argc;
 	as.argv = argv;
@@ -50,41 +51,46 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	//see if fs type is specified.
 	//if not default to f2fs (TODO:remove f2fs)
-	if(as.argc > 0 && sscanf(*as.argv, "%s%*c", tmp_str) == 1
-		&& request_module("dm-inject-%s", tmp_str) == 0) {
+	if (as.argc > 0 && sscanf(*as.argv, "%s%c", tmp_str, &dummy) == 1
+		&& !request_module("dm-inject-%s", tmp_str)) {
 		dm_shift_arg(&as);
-	} else if(request_module("dm-inject-f2fs") == 0) {
+	} else if (request_module("dm-inject-f2fs") == 0) {
 		strcpy(tmp_str, "f2fs");
 	} else {
-		DMDEBUG("unable to request module dm-inject-%s", tmp_str);
+		DMDEBUG("Unable to request module dm-inject-%s", tmp_str);
+		ti->error = "Unable to request module";
+		goto bad;
+	}
+	DMDEBUG("Requested module: dm-inject-%s", tmp_str);
+
+	if (list_empty(&_fs_list)) {
+		DMDEBUG("Unable to register the filesystem");
+		ti->error = "Unable to register the filesystem";
 		goto bad;
 	}
 
-	DMDEBUG("request module dm-inject-%s", tmp_str);
-
-	if(list_empty(&_fs_list)) {
-		DMDEBUG("unable to register any inject filesystem");
-		goto bad;
-	}
-
-	if(dm_find_inject_fs(tmp_str)!=NULL) {
-		DMDEBUG("found inject_fs_type %s, assign to inject_c", tmp_str);
-		ic->fs_t = dm_find_inject_fs(tmp_str);
+	inject_fs_type = dm_find_inject_fs(tmp_str);
+	if (inject_fs_type != NULL) {
+		DMDEBUG("Found inject_fs_type %s, assign it to inject_c", tmp_str);
+		ic->fs_t = inject_fs_type;
 	} else {
-		DMDEBUG("no matching module for filesystem injection: %s", tmp_str);
+		DMDEBUG("No matching module for filesystem injection: %s", tmp_str);
+		ti->error = "No matching module for fileystem injection";
 		goto bad;
 	}
 
 	INIT_LIST_HEAD(&ic->inject_list);
-
 	ret = ic->fs_t->parse_args(ic, &as, ti->error);
+	if (ret) {
+		DMDEBUG("Could not parse the specified arguments!");
+		ti->error = "Could not parse the specified arguments!";
+		goto bad;
+	}
 
-	if(ret)
-		return ret;
-
-	// do this last since it impacts ref count
+	/* Do this last since it impacts ref count. */
 	ret = dm_get_device(ti, devname, dm_table_get_mode(ti->table), &ic->dev);
 	if (ret) {
+		DMDEBUG("Device lookup failed");
 		ti->error = "Device lookup failed";
 		goto bad;
 	}
@@ -95,9 +101,10 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ti->private = ic;
 	ic->fs_t->ctr(ic);
 	return 0;
-	bad:
-		kfree(ic);
-		return ret;
+
+bad:
+	kfree(ic);
+	return ret;
 }
 
 // Destructor
@@ -105,6 +112,7 @@ static void inject_dtr(struct dm_target *ti)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
 	struct inject_rec *tmp, *tmp2;
+
 	dm_put_device(ti, ic->dev);
 	ic->fs_t->dtr(ic);
 	list_for_each_entry_safe(tmp, tmp2, &ic->inject_list, list) {
@@ -125,7 +133,7 @@ static int check_corrupt_sector(struct inject_c *ic, sector_t s)
 	}
 	for (i=0;i<ic->num_corrupt;i++) {
 		DMDEBUG("%s %d %d", __func__, i, ic->corrupt_sector[i]);
-		if(s == ic->corrupt_sector[i])
+		if (s == ic->corrupt_sector[i])
 			return 1;
 	}
 	return 0;
@@ -135,13 +143,13 @@ static int check_corrupt_block(struct inject_c *ic, u32 blk)
 {
 	int i;
 	//DMDEBUG("%s %d", __func__, blk);
-	if(ic->corrupt_block == NULL) {
+	if (ic->corrupt_block == NULL) {
 		//DMDEBUG("%s NULL", __func__);
 		return 0;
 	}
 	for (i=0;i<ic->num_corrupt;i++) {
 		//DMDEBUG("%s %d %d", __func__, i, ic->corrupt_block[i]);
-		if(blk == ic->corrupt_block[i])
+		if (blk == ic->corrupt_block[i])
 			return 1;
 	}
 	return 0;
@@ -169,7 +177,7 @@ static int f2fs_get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_i
 		ni->ino = nat_get_ino(e);
 		ni->blk_addr = nat_get_blkaddr(e)
 	}
-	
+
 	//check current segment summary
 	down_read(&curseg->journal_rwsem);
 	//i = lookup_journal_in_cursum(journal, NAT_JOURNAL, nid, 0);
@@ -278,19 +286,20 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 
 static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
 {
-	int r = -EINVAL;
 	struct inject_c *ic = (struct inject_c *) ti->private;
 
-	if(argc!=1) {
-		return r;
+	if (argc != 1) {
+		DMDEBUG("%s: Additional arguments provided!", __func__);
+		return -EINVAL;
 	}
-	if(strcasecmp(argv[0], "test")==0) {
-		DMDEBUG("%s test message", __func__);
-	} else if (strcasecmp(argv[0], "start")==0) {
-		DMDEBUG("%s enable injection", __func__);
+
+	if (!strcasecmp(argv[0], "test"))
+		DMDEBUG("%s: test message", __func__);
+	else if (!strcasecmp(argv[0], "start")) {
+		DMDEBUG("%s: enable injection", __func__);
 		ic->inject_enable = true;
-	} else if (strcasecmp(argv[0], "stop")==0) {
-		DMDEBUG("%s disable injection", __func__);
+	} else if (!strcasecmp(argv[0], "stop")) {
+		DMDEBUG("%s: disable injection", __func__);
 		ic->inject_enable = false;
 	}
 	return 0;
@@ -310,9 +319,10 @@ static struct target_type inject_target = {
 static int __init dm_inject_init(void)
 {
 	int r = dm_register_target(&inject_target);
-	if (r<0)
+	if (r < 0)
 		DMERR("dm_inject register failed %d", r);
 	DMDEBUG("dm-inject target registered");
+
 	return r;
 }
 
@@ -327,6 +337,7 @@ int dm_register_inject_fs(struct inject_fs_type *fs)
 	spin_lock(&_fs_list_lock);
 	list_add_tail(&fs->list, &_fs_list);
 	spin_unlock(&_fs_list_lock);
+
 	DMDEBUG("registered %s", fs->name);
 	return 0;
 }
@@ -337,6 +348,7 @@ int dm_unregister_inject_fs(struct inject_fs_type *fs)
 	spin_lock(&_fs_list_lock);
 	list_del(&fs->list);
 	spin_unlock(&_fs_list_lock);
+
 	DMDEBUG("unregistered %s", fs->name);
 	return 0;
 }
@@ -345,12 +357,16 @@ EXPORT_SYMBOL(dm_unregister_inject_fs);
 struct inject_fs_type *dm_find_inject_fs(const char* name)
 {
 	struct inject_fs_type *tmp, *ret = NULL;
+
 	spin_lock(&_fs_list_lock);
 	list_for_each_entry(tmp, &_fs_list, list) {
-		if(strcmp(tmp->name, name)==0)
+		if (!strcmp(tmp->name, name)) {
 			ret = tmp;
+			break;
+		}
 	}
 	spin_unlock(&_fs_list_lock);
+
 	return ret;
 }
 EXPORT_SYMBOL(dm_find_inject_fs);
@@ -359,5 +375,6 @@ module_init(dm_inject_init)
 module_exit(dm_inject_exit)
 
 MODULE_AUTHOR("Andy Hwang <hwang@cs.toronto.edu>");
+MODULE_AUTHOR("Stathis Maneas <smaneas@cs.toronto.edu>");
 MODULE_DESCRIPTION(DM_NAME " error injection target");
 MODULE_LICENSE("GPL");
