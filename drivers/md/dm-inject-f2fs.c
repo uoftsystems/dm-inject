@@ -555,13 +555,16 @@ bool f2fs_corrupt_checkpoint(struct inject_c *ic, int op)
 	return false;
 }
 
-bool f2fs_corrupt_nat(struct inject_c *ic, int op)
+bool f2fs_corrupt_sit(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_F2FS_NAT
-			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s CORRUPT %s nat", __func__, RW(op));
+		if (tmp->type == DM_INJECT_F2FS_SIT && !tmp->corruption_enabled
+		    && (tmp->op < 0 || tmp->op == op)
+		    && (!tmp->block_num || tmp->block_num == blk)) {
+			DMDEBUG("%s CORRUPT %s sit blk %u", __func__,
+				RW(op), blk);
 			return true;
 		}
 	}
@@ -570,40 +573,272 @@ bool f2fs_corrupt_nat(struct inject_c *ic, int op)
 
 bool f2fs_inject_rec_has_member(struct inject_rec *rec)
 {
-	return strlen(rec->inode_member) > 0;
+	return strlen(rec->member) > 0;
 }
 
-bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op, struct page *page)
+bool f2fs_corrupt_sit_block(struct inject_c *ic, block_t blk, int op,
+			struct page *page)
+{
+	int i;
+	struct inject_rec *tmp;
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if (tmp->type == DM_INJECT_F2FS_SIT && tmp->corruption_enabled
+		    && (!tmp->block_num || tmp->block_num == blk)
+		    && (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s CORRUPT %s SIT blk %u", __func__, RW(op), blk);
+
+			if (f2fs_inject_rec_has_member(tmp)) {
+				struct f2fs_sit_block *sit_block =
+					(struct f2fs_sit_block *) page_address(page);
+
+				for (i = 0; i < SIT_ENTRY_PER_BLOCK; ++i) {
+					struct f2fs_sit_entry *sit_entry = &sit_block->entries[i];
+
+					if (!strcmp(tmp->member, "vblocks")) {
+						int old_val = le16_to_cpu(sit_entry->vblocks);
+						sit_entry->vblocks = 0;
+						DMDEBUG("%s CORRUPT index %d member %s old %#x new %#x",
+							__func__, i, tmp->member, old_val,
+							le16_to_cpu(sit_entry->vblocks));
+					} else if (!strcmp(tmp->member, "mtime")) {
+						unsigned long long old_val = le64_to_cpu(sit_entry->mtime);
+                                                sit_entry->mtime = 0;
+                                                DMDEBUG("%s CORRUPT index %d member %s old %#llx new %#llx",
+                                                        __func__, i, tmp->member, old_val,
+							le64_to_cpu(sit_entry->mtime));
+					} else if (!strcmp(tmp->member, "vmap")) {
+						memset(sit_entry->valid_map, 0, SIT_VBLOCK_MAP_SIZE);
+						DMDEBUG("%s CORRUPT index %d member %s",
+                                                        __func__, i, tmp->member);
+					} else {
+						DMDEBUG("%s CORRUPT inode %s (zero)",
+							__func__, tmp->member);
+						memset((void *) sit_block, 0, PAGE_SIZE);
+					}
+				}
+			} else
+				memset(page_address(page), 0, PAGE_SIZE);
+
+			return true;
+                }
+        }
+        return false;
+
+}
+
+bool f2fs_corrupt_ssa(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
-			&& (tmp->op < 0 || tmp->op == op)) {
-			//DMDEBUG("%s %s %d", __func__, RW(op), ino);
-			if(f2fs_inject_rec_has_member(tmp)) {
-				if(strcmp(tmp->inode_member, "mode") == 0) {
-					struct f2fs_node *node = F2FS_NODE(page);
-					int old_val = node->i.i_mode;
-					node->i.i_mode = 0;
-					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
+		if (tmp->type == DM_INJECT_F2FS_SSA && !tmp->corruption_enabled
+		    && (tmp->op < 0 || tmp->op == op)
+		    && (!tmp->block_num || tmp->block_num == blk)) {
+			DMDEBUG("%s CORRUPT %s ssa blk %u", __func__,
+				RW(op), blk);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool f2fs_corrupt_ssa_block(struct inject_c *ic, block_t blk, int op,
+                            struct page *page)
+{
+	//int i;
+        struct inject_rec *tmp;
+
+        list_for_each_entry(tmp, &ic->inject_list, list) {
+                if (tmp->type == DM_INJECT_F2FS_SSA && tmp->corruption_enabled
+		    && (!tmp->block_num || tmp->block_num == blk)
+		    && (tmp->op < 0 || tmp->op == op)) {
+			DMDEBUG("%s CORRUPT %s SSA blk %u", __func__,
+				RW(op), blk);
+			memset(page_address(page), 0, PAGE_SIZE);
+
+			return true;
+                }
+        }
+        return false;
+
+}
+
+bool f2fs_corrupt_nat(struct inject_c *ic, block_t blk, int op)
+{
+	struct inject_rec *tmp;
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if (tmp->type == DM_INJECT_F2FS_NAT && !tmp->corruption_enabled
+		    && (tmp->op < 0 || tmp->op == op)
+		    && (!tmp->block_num || tmp->block_num == blk)) {
+			DMDEBUG("%s CORRUPT %s nat blk %u", __func__,
+				RW(op), blk);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool f2fs_corrupt_nat_block(struct inject_c *ic, block_t blk, int op,
+			struct page *page)
+{
+	int i;
+	bool corrupted = false;
+	struct inject_rec *tmp;
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if (tmp->type == DM_INJECT_F2FS_NAT && tmp->corruption_enabled
+		    && (!tmp->block_num || tmp->block_num == blk)
+		    && (tmp->op < 0 || tmp->op == op)) {
+			struct f2fs_nat_block *nat_block =
+				(struct f2fs_nat_block *) page_address(page);
+
+			if (tmp->inode_num) {
+				for (i = 0; i < NAT_ENTRY_PER_BLOCK; ++i) {
+					struct f2fs_nat_entry *nat_entry = &(nat_block->entries[i]);
+					if (le32_to_cpu(nat_entry->ino) == tmp->inode_num) {
+						nat_entry->ino = 0;
+						DMDEBUG("%s CORRUPT inode %d (nat entry) %s blk %u",
+							__func__, tmp->inode_num, RW(op), blk);
+						DMDEBUG("%s CORRUPT (nat entry) old: %d new: 0",
+							__func__, tmp->inode_num);
+						DMDEBUG("%s CORRUPT (nat entry) old: %u new: 0",
+							__func__, le32_to_cpu(nat_entry->block_addr));
+						nat_entry->block_addr = 0;
+					}
 				}
-				if(strcmp(tmp->inode_member, "atime") == 0) {
-					struct f2fs_node *node = F2FS_NODE(page);
-					int old_val = node->i.i_atime;
-					node->i.i_atime = 0;
-					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
-				}
-				if(strcmp(tmp->inode_member, "flags") == 0) {
-					struct f2fs_node *node = F2FS_NODE(page);
-					int old_val = node->i.i_flags;
-					node->i.i_flags = 0;
-					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__, tmp->inode_member, old_val, node->i.i_mode);
-				}
+
+				//return true;
+				corrupted = true;
+			} else {
+				memset((void *) nat_block, 0, PAGE_SIZE);
+				DMDEBUG("%s CORRUPT NAT %s blk %u", __func__, RW(op), blk);
 				return true;
 			}
 		}
 	}
+	return corrupted;
+}
+
+bool f2fs_corrupt_datablock(struct inject_c *ic, block_t blk, int op,
+			struct page *page)
+{
+	int i, ret;
+	struct inject_rec *tmp;
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if (tmp->type == DM_INJECT_F2FS_BLOCK && tmp->block_num == blk
+		   && (tmp->op < 0 || tmp->op == op) && tmp->corruption_enabled) {
+			struct f2fs_dentry_block *dentry_block =
+                                (struct f2fs_dentry_block *) page_address(page);
+
+			DMDEBUG("%s CORRUPT %s datablock %u", __func__, RW(op), blk);
+			for (i = 0; i < SIZE_OF_DENTRY_BITMAP; ++i) {
+				ret = test_and_clear_bit_le(i, dentry_block->dentry_bitmap);
+				if (ret != 0)
+					DMDEBUG("%s CORRUPT dir entry at index %d", __func__, i);
+			}
+
+                        return true;
+		}
+	}
+        return false;
+}
+
+bool f2fs_corrupt_dnode(struct inject_c *ic, block_t blk, int op)
+{
+        struct inject_rec *tmp;
+
+        list_for_each_entry(tmp, &ic->inject_list, list) {
+                if ((tmp->type == DM_INJECT_F2FS_DNODE || tmp->type == DM_INJECT_F2FS_INDNODE)
+		    && !tmp->corruption_enabled
+                    && (tmp->op < 0 || tmp->op == op)
+                    && (!tmp->block_num || tmp->block_num == blk)) {
+                        DMDEBUG("%s CORRUPT %s dnode blk %u", __func__,
+                                RW(op), blk);
+                        return true;
+                }
+        }
+        return false;
+}
+
+bool __f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op,
+                        struct page *page, bool to_clear)
+{
+        int ret, off;
+        struct inject_rec *rec;
+
+        list_for_each_entry(rec, &ic->inject_list, list) {
+                if (rec->type == DM_INJECT_F2FS_BLOCK && rec->block_num == blk
+		    && (rec->corruption_enabled || ic->global_corrupt_enable)
+                    && (rec->op < 0 || rec->op == op)) {
+			if (to_clear) {
+				memset(page_address(page), 0, PAGE_SIZE);
+				DMDEBUG("%s CORRUPT (zero) %s block %u", __func__, RW(op), blk);
+			} else {
+				char *ptr = (char *) page_address(page);
+
+				ret = wait_for_random_bytes();
+				if (unlikely(ret)) {
+					DMWARN("%s An error occurred while waiting for the "
+						"urandom pool to be seeded: %d", __func__, ret);
+					continue;
+				}
+
+				get_random_bytes(&off, sizeof(off));
+				off %= PAGE_SIZE;
+				ptr[off] = !ptr[off];
+
+				DMDEBUG("%s CORRUPT %s block %u at offset %d", __func__, RW(op), blk, off);
+                        }
+			return true;
+		}
+	}
+
 	return false;
+}
+
+bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op,
+			       struct page *page)
+{
+	bool corrupted = false;
+	struct inject_rec *tmp;
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if (tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
+			&& (tmp->op < 0 || tmp->op == op) && tmp->corruption_enabled) {
+			//DMDEBUG("%s %s %d", __func__, RW(op), ino);
+			if (f2fs_inject_rec_has_member(tmp)) {
+				struct f2fs_node *node = F2FS_NODE(page);
+
+				if (!strcmp(tmp->member, "mode")) {
+					int old_val = le16_to_cpu(node->i.i_mode);
+					node->i.i_mode = 0;
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__,
+						tmp->member, old_val, le16_to_cpu(node->i.i_mode));
+				} else if (!strcmp(tmp->member, "atime")) {
+					int old_val = le64_to_cpu(node->i.i_atime);
+					node->i.i_atime = 0;
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#llx", __func__,
+						tmp->member, old_val, le64_to_cpu(node->i.i_atime));
+				} else if (!strcmp(tmp->member, "flags")) {
+					int old_val = le32_to_cpu(node->i.i_flags);
+					node->i.i_flags = 0;
+					DMDEBUG("%s CORRUPT inode %s old %#x new %#x", __func__,
+						tmp->member, old_val, le32_to_cpu(node->i.i_flags));
+				} else {
+					DMDEBUG("%s CORRUPT inode %s (zero)",
+						__func__, tmp->member);
+					memset(page_address(page), 0, PAGE_SIZE);
+				}
+
+				//return true;
+				corrupted = true;
+			}
+		}
+	}
+	return corrupted;
 }
 
 // check inode against input to see if corruption should take place
@@ -860,15 +1095,15 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
 	} else if (sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
 		DMDEBUG("%s SIT blk %d", __func__, blk);
-		return false;
+		return f2fs_corrupt_sit(ic, blk, op);
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
 		DMDEBUG("%s NAT blk %d", __func__, blk);
-		return f2fs_corrupt_nat(ic, op);
+		return f2fs_corrupt_nat(ic, blk, op);
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
 		DMDEBUG("%s SSA blk %d", __func__, blk);
-		return false;
+		return f2fs_corrupt_ssa(ic, blk, op);
 	} else if (fsc->partial_sbi && main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
 		DMDEBUG("%s MAIN blk %d", __func__, blk);
@@ -905,7 +1140,11 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
 			}
 
 		} else if (IS_NODESEG(type)) {
-			DMDEBUG("%s NODE %s num %d  blk %d seg %u", __func__, RW(bio_op(bio)), num, blk, segno);
+			DMDEBUG("%s NODE %s num %d blk %d seg %u", __func__,
+                                RW(bio_op(bio)), num, blk, segno);
+
+			if (f2fs_corrupt_dnode(ic, blk, op))
+				return true;
 		} else {
 			DMDEBUG("%s DATA %s blk %d seg %u", __func__,
                                 RW(bio_op(bio)), blk, segno);
@@ -1019,6 +1258,37 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 		case DM_INJECT_F2FS_INODE:
 			ino = ino_of_node(page);
 			if (f2fs_corrupt_inode_member(ic, ino, op, page))
+				return DM_INJECT_CORRUPT;
+			break;
+                case DM_INJECT_F2FS_NAT:
+                        blk = SECTOR_TO_BLOCK(sec);
+                        if (f2fs_corrupt_nat_block(ic, blk, op, page))
+				return DM_INJECT_CORRUPT;
+                        break;
+		case DM_INJECT_F2FS_SIT:
+			blk = SECTOR_TO_BLOCK(sec);
+			if (f2fs_corrupt_sit_block(ic, blk, op, page))
+				return DM_INJECT_CORRUPT;
+			break;
+                case DM_INJECT_F2FS_SSA:
+                        blk = SECTOR_TO_BLOCK(sec);
+                        if (f2fs_corrupt_ssa_block(ic, blk, op, page))
+                                return DM_INJECT_CORRUPT;
+                        break;
+                case DM_INJECT_F2FS_BLOCK:
+                        blk = SECTOR_TO_BLOCK(sec);
+                        if (__f2fs_corrupt_block(ic, blk, op, page, false))
+                                return DM_INJECT_CORRUPT;
+                        break;
+		case DM_INJECT_F2FS_DATA:
+			blk = SECTOR_TO_BLOCK(sec);
+			if (f2fs_corrupt_datablock(ic, blk, op, page))
+				return DM_INJECT_CORRUPT;
+			break;
+		case DM_INJECT_F2FS_DNODE:
+		case DM_INJECT_F2FS_INDNODE:
+			blk = SECTOR_TO_BLOCK(sec);
+			if (__f2fs_corrupt_block(ic, blk, op, page, true))
 				return DM_INJECT_CORRUPT;
 			break;
 		default:
