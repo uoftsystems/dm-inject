@@ -5,6 +5,7 @@
 
 
 #include <linux/f2fs_fs.h>
+#include <linux/random.h>
 
 #include "dm-inject.h"
 #include "../../fs/f2fs/f2fs.h"
@@ -1253,6 +1254,24 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 	int block_type = __f2fs_block_id(ic, bio, bvec, sec, op);
 	block_t blk;
 	nid_t ino;
+
+	/*
+	 * In case global corruption mode is enabled, then try clearing the contents
+	 * of the specified block first.
+	 */
+	if (ic->global_corrupt_enable) {
+	        struct inject_rec *rec;
+
+		blk = SECTOR_TO_BLOCK(sec);
+		list_for_each_entry(rec, &ic->inject_list, list) {
+			if (rec->block_num == blk && (rec->op < 0 || rec->op == op)) {
+				memset(page_address(page), 0, PAGE_SIZE);
+				DMDEBUG("%s Global CORRUPT (zero) %s block %u",
+					__func__, RW(op), blk);
+				return DM_INJECT_CORRUPT;
+			}
+		}
+	}
 
 	switch(block_type) {
 		case DM_INJECT_F2FS_INODE:

@@ -81,12 +81,15 @@ struct inject_c {
 	struct dm_dev *dev; //underlying device
 	struct block_device *src_bdev; //source of bio requests
 	sector_t start;
+
 	//info related to corruption
 	unsigned int num_corrupt;
 	sector_t *corrupt_sector;
 	u32 *corrupt_block;
+	bool global_corrupt_enable;
 	bool inject_enable;
 	struct list_head inject_list;
+
 	//fs-specific data
 	struct inject_fs_type *fs_t;
 	void *context;

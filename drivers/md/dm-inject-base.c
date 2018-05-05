@@ -97,6 +97,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	ic->src_bdev = NULL;
 	ic->inject_enable = false; //injection disabled by default
+	ic->global_corrupt_enable = false; //global corruption disabled by default
 	ti->num_discard_bios = 1;
 	ti->private = ic;
 	ic->fs_t->ctr(ic);
@@ -313,7 +314,15 @@ static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
 	} else if (!strcasecmp(argv[0], "stop")) {
 		DMDEBUG("%s: disable injection", __func__);
 		ic->inject_enable = false;
-	}
+	} else if (!strcasecmp(argv[0], "corruption_on")) {
+		DMDEBUG("%s: enable global corruption", __func__);
+		ic->global_corrupt_enable = true;
+	} else if (!strcasecmp(argv[0], "corruption_off")) {
+		DMDEBUG("%s: disable global corruption", __func__);
+		ic->global_corrupt_enable = false;
+	} else
+		DMDEBUG("%s: unsupported operation: %s", __func__, argv[0]);
+
 	return 0;
 }
 
