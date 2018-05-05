@@ -197,52 +197,56 @@ found:
 static int inject_map(struct dm_target *ti, struct bio *bio)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	struct super_block *sb;
 	int ret = DM_MAPIO_SUBMITTED;
 	struct bio_vec *bvec;
 	unsigned int iter;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 
-	//drop read-ahead?
-//	if(bio->bi_opf & REQ_RAHEAD) {
-//		DMDEBUG("%s fail RAHEAD", __func__);
-//		return DM_MAPIO_KILL;
-//	}
-	//assign src_bdev to grab superblock if fs is mounted
-	//DMDEBUG("%s bio->bi_disk %p bd_super %p", __func__, bio->bi_disk, (bdget_disk(bio->bi_disk, 0))->bd_super);
-	if(bio->bi_disk != NULL) {
-		ic->src_bdev = bdget_disk(bio->bi_disk, 0);
+	//drop read-ahead.
+	if (bio->bi_opf & REQ_RAHEAD) {
+		DMDEBUG("%s fail RAHEAD", __func__);
+		return DM_MAPIO_KILL;
 	}
 
-	//linear mapping
-	bio_set_dev(bio, ic->dev->bdev);
-	if(bio_sectors(bio)) {
-		bio->bi_iter.bi_sector += ic->start;
-		bio->bi_iter.bi_sector -= ti->begin;
-	}
+	//assign src_bdev to grab superblock if fs is mounted
+	//DMDEBUG("%s bio->bi_disk %p bd_super %p", __func__, bio->bi_disk, (bdget_disk(bio->bi_disk, 0))->bd_super);
+
 	//make the request SYNC to prevent merging?
 	//bio->bi_opf |= REQ_SYNC;
-	ret = DM_MAPIO_REMAPPED;
+	//ret = DM_MAPIO_REMAPPED;
 
 	//DMDEBUG("%s sb %p", __func__, sb);
 	//intercept and inject F2FS write requests
 	//data travelling from from memory to block device
-	if(ic->inject_enable)
-		if(bio_op(bio)==REQ_OP_WRITE) {
+	if (ic->inject_enable) {
+		if (bio_op(bio) == REQ_OP_WRITE) {
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
 				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
-				if(ic->fs_t->data_to_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE)
-					ret = max(ret, DM_MAPIO_REMAPPED);
-				else if(ic->fs_t->block_to_dev(ic, bio, bvec, sec))
-					ret = max(ret, DM_MAPIO_KILL);
+                                /*
+                                 * In case of data corruption, re-map it as expected.
+                                 * Otherwise, check if the operation must be dropped.
+                                 */
+				if (!ic->fs_t->data_to_dev(ic, bio, bvec, sec))
+					if (ic->fs_t->block_to_dev(ic, bio, bvec, sec))
+                                                return DM_MAPIO_KILL;
 			}
 		}
+        }
 
-	if(ret==DM_MAPIO_SUBMITTED)
-		bio_endio(bio);
+	if (bio->bi_disk)
+		ic->src_bdev = bdget_disk(bio->bi_disk, 0);
+
+	//linear mapping
+	bio_set_dev(bio, ic->dev->bdev);
+	if (bio_sectors(bio)) {
+		bio->bi_iter.bi_sector += ic->start;
+		bio->bi_iter.bi_sector -= ti->begin;
+		ret = DM_MAPIO_REMAPPED;
+	}
+
 	//dump_stack();
 	return ret;
 }
