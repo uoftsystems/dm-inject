@@ -179,20 +179,21 @@ void f2fs_inject_dtr(struct inject_c *ic)
 
 int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 {
-	unsigned long long tmp = 0;
-	int tmp2 = -1;
-	char tmp_str[64];
-	const char *devname;
-	char dummy;
-	int i, ret = 0;
+	int i, ret;
+	block_t tmp;
+	unsigned long long tmp_access;
+	char tmp_str[MEMBER_MAX_LENGTH + 1];
+	char spec[2 * MEMBER_MAX_LENGTH + 1];
+	char mode;
+	struct inject_rec *new_block;
 
 	// read sectors to corrupt
 	if (as->argc > 0) {
 		ic->num_corrupt = as->argc;
 		//ic->corrupt_sector = (sector_t*) kmalloc(ic->num_corrupt * sizeof(sector_t), GFP_KERNEL);
 		ic->corrupt_sector = NULL;
-		ic->corrupt_block = (block_t*) kmalloc(ic->num_corrupt * sizeof(block_t), GFP_NOIO);
-		DMDEBUG("%s num %d size %d", __func__, ic->num_corrupt, sizeof(block_t));
+		ic->corrupt_block = (block_t *) kmalloc(ic->num_corrupt * sizeof(block_t), GFP_NOIO);
+		DMDEBUG("%s num %d size %lu", __func__, ic->num_corrupt, sizeof(block_t));
 	} else {
 		ic->num_corrupt = 0;
 		ic->corrupt_sector = NULL;
@@ -205,50 +206,102 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		int new_op = -1;
 		bool corrupt_flag = false;
 
+		tmp = 0;
+		tmp_access = 1;
+
+		/* Prepare the specification for parsing arguments related to inodes. */
+		sprintf(spec, "%%u:%%llu:%%%ds", MEMBER_MAX_LENGTH);
+		tmp_str[0] = '\0';
+
+		if (*cur_arg == 'C') {
+			++cur_arg;
+			corrupt_flag = true;
+		}
+
 		// R or W denotes only corrupting on one type of access
-		if (strchr(cur_arg,'R') == cur_arg) {
-			cur_arg++;
+		if (*cur_arg == 'R') {
+			++cur_arg;
 			new_op = REQ_OP_READ;
-		} else if (strchr(cur_arg,'W') == cur_arg) {
-			cur_arg++;
+		} else if (*cur_arg == 'W') {
+			++cur_arg;
 			new_op = REQ_OP_WRITE;
 		}
 
 		// meta blocks
-		if (strcmp(cur_arg, "cp") == 0) {
+		if (!strncmp(cur_arg, "cp", 2)) {
 			cur_arg += 2;
 			new_type = DM_INJECT_F2FS_CP;
-		} else if (strcmp(cur_arg, "nat") == 0) {
+		} else if (!strncmp(cur_arg, "nat", 3)) {
 			cur_arg += 3;
 			new_type = DM_INJECT_F2FS_NAT;
-		// sector/block/inode/data
+
+			if (*cur_arg == 'b' || *cur_arg == 'i')
+				mode = *cur_arg++;
+			else if (*cur_arg) {
+				DMDEBUG("%s invalid corruption target: %s", __func__, cur_arg);
+				error = "Invalid corruption target";
+				return -1;
+			}
+
+			ret = sscanf(cur_arg, "%u", &tmp);
+			if(!ret) {
+				DMINFO("%s The NAT argument is not followed by a (valid) number ...", __func__);
+				if (corrupt_flag)
+					DMINFO("%s Corruption is enabled, will corrupt all NAT blocks!", __func__);
+			}
+
+		} else if (!strncmp(cur_arg, "sit", 3)) {
+                        cur_arg += 3;
+                        new_type = DM_INJECT_F2FS_SIT;
+
+			/* Prepare the specification for parsing arguments related to sit blocks. */
+			sprintf(spec, "%%u:%%%ds", MEMBER_MAX_LENGTH);
+
+                        ret = sscanf(cur_arg, spec, &tmp, tmp_str);
+                        if (!ret && corrupt_flag)
+                                DMINFO("%s Corruption is enabled, will corrupt "
+                                       "all SIT blocks!", __func__);
+
+                } else if (!strncmp(cur_arg, "ssa", 3)) {
+                        cur_arg += 3;
+                        new_type = DM_INJECT_F2FS_SSA;
+
+                        ret = sscanf(cur_arg, "%u", &tmp);
+                        if (!ret && corrupt_flag)
+                                DMINFO("%s Corruption is enabled, will corrupt "
+                                       "all SSA blocks!", __func__);
+                } else if (*cur_arg == 'n') {
+			new_type = DM_INJECT_F2FS_DNODE;
 		} else {
-			if (strchr(cur_arg,'s') == cur_arg) {
-				cur_arg++;
-				new_type = DM_INJECT_SECTOR;
-			} else if (strchr(cur_arg,'b') == cur_arg) {
-				cur_arg++;
-				new_type = DM_INJECT_BLOCK;
-			} else if (strchr(cur_arg,'i') == cur_arg) {
-				cur_arg++;
+			/* sector/block/inode/data */
+			if (*cur_arg == 's') {
+				++cur_arg;
+				new_type = DM_INJECT_F2FS_SECTOR;
+			} else if (*cur_arg == 'b') {
+				++cur_arg;
+				new_type = DM_INJECT_F2FS_BLOCK;
+			} else if (*cur_arg == 'i') {
+				++cur_arg;
 				new_type = DM_INJECT_F2FS_INODE;
-			} else if (strchr(cur_arg,'d') == cur_arg) {
-				cur_arg++;
+			} else if (*cur_arg == 'd') {
+				++cur_arg;
 				new_type = DM_INJECT_F2FS_DATA;
 			}
 
 			// the number
-			// offset within data node
-			if (new_type == DM_INJECT_F2FS_DATA && sscanf(cur_arg, "%llu[%d]%*c", &tmp, &tmp2) == 2) {
-				//DMDEBUG("%s corrupt data %d offset %d", __func__, tmp, tmp2);
-			// specific member inside inode
-			} else if (new_type == DM_INJECT_F2FS_INODE && sscanf(cur_arg, "%llu[%s]%*c", &tmp, tmp_str) == 2) {
-				if(tmp_str[strlen(tmp_str)-1]==']')
-					tmp_str[strlen(tmp_str)-1]=0;
-				//DMDEBUG("%s corrupt inode %d member %s", __func__, tmp, tmp_str);
-			} else if (sscanf(cur_arg, "%llu%*c", &tmp) == 1) {
-				//DMDEBUG("%s corrupt %d", __func__, tmp);
+			if (new_type == DM_INJECT_F2FS_INODE &&
+				sscanf(cur_arg, spec, &tmp, &tmp_access, tmp_str) > 0) {
+				// specific member inside inode
+				DMDEBUG("%s corrupt inode %u member %s access freq %llu",
+                                        __func__, tmp, tmp_str, tmp_access);
+
+			} else if (sscanf(cur_arg, "%u:%llu", &tmp, &tmp_access) > 0) {
+				DMDEBUG("%s corrupt %u access freq %llu",
+                                        __func__, tmp, tmp_access);
+
 			} else {
+				DMDEBUG("%s invalid corruption target: %s",
+                                        __func__, cur_arg);
 				error = "Invalid corruption target";
 				return -1;
 			}
@@ -265,31 +318,76 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		}
 		new_block->type = new_type;
 		new_block->op = new_op;
+		new_block->access_freq = tmp_access;
 		new_block->corruption_enabled = corrupt_flag;
+
+		if (new_block->type == DM_INJECT_F2FS_SECTOR) {
 			new_block->sector_num = tmp;
-			DMDEBUG("%s corrupt %s sector %d", __func__, RW(new_block->op), new_block->sector_num);
-		} else if (new_block->type == DM_INJECT_BLOCK) {
+			DMDEBUG("%s corrupt %s sector %lu", __func__,
+				RW(new_block->op), new_block->sector_num);
+
+		} else if (new_block->type == DM_INJECT_F2FS_BLOCK) {
 			new_block->block_num = tmp;
-			DMDEBUG("%s corrupt %s block %d", __func__, RW(new_block->op), new_block->block_num);
+			DMDEBUG("%s corrupt %s block %u", __func__,
+				RW(new_block->op), new_block->block_num);
+
 		} else if (new_block->type == DM_INJECT_F2FS_CP) {
 			new_block->block_num = 0;
-			DMDEBUG("%s corrupt %s checkpoint", __func__, RW(new_block->op));
+			DMDEBUG("%s corrupt %s checkpoint", __func__,
+				RW(new_block->op));
+
 		} else if (new_block->type == DM_INJECT_F2FS_NAT) {
-			new_block->block_num = 0;
-			DMDEBUG("%s corrupt %s NAT", __func__, RW(new_block->op));
-		} else if (new_block->type == DM_INJECT_F2FS_INODE) {
+			if (mode == 'b') {
+				new_block->block_num = tmp;
+				new_block->inode_num = 0;
+			} else if (mode == 'i') {
+				new_block->block_num = 0;
+				new_block->inode_num = tmp;
+			}
+
+			DMDEBUG("%s corrupt %s NAT blk %u inode %u", __func__,
+				RW(new_block->op), new_block->block_num,
+				new_block->inode_num);
+
+		} else if (new_block->type == DM_INJECT_F2FS_SIT) {
+                        new_block->block_num = tmp;
+
+			if (tmp_str[0])
+                                strcpy(new_block->member, tmp_str);
+                        else
+                                new_block->member[0] = 0;
+
+                        DMDEBUG("%s corrupt %s SIT blk %u [%s]",
+				__func__, RW(new_block->op),
+				new_block->block_num, new_block->member);
+
+                } else if (new_block->type == DM_INJECT_F2FS_SSA) {
+                        new_block->block_num = tmp;
+
+                        DMDEBUG("%s corrupt %s SSA blk %u",__func__,
+				RW(new_block->op), new_block->block_num);
+
+                } else if (new_block->type == DM_INJECT_F2FS_INODE) {
 			new_block->inode_num = tmp;
-			if(strlen(tmp_str))
-				strcpy(new_block->inode_member, tmp_str);
+
+			if (tmp_str[0])
+				strcpy(new_block->member, tmp_str);
 			else
-				new_block->inode_member[0]=0;
-			tmp_str[0]=0;
-			DMDEBUG("%s corrupt %s inode %d %s", __func__, RW(new_block->op), new_block->inode_num, new_block->inode_member);
+				new_block->member[0] = 0;
+
+			DMDEBUG("%s corrupt %s inode %u [%s]",
+				__func__, RW(new_block->op),
+				new_block->inode_num, new_block->member);
+
+		} else if (new_block->type == DM_INJECT_F2FS_DNODE) {
+			new_block->block_num = tmp;
+			DMDEBUG("%s corrupt %s dnode %u", __func__,
+				RW(new_block->op), new_block->block_num);
+
 		} else if (new_block->type == DM_INJECT_F2FS_DATA) {
-			new_block->inode_num = tmp;
-			new_block->offset = tmp2/PAGE_SIZE;
-			tmp2 = -1;
-			DMDEBUG("%s corrupt %s data of inode %d off %d", __func__, RW(new_block->op), new_block->inode_num, new_block->offset);
+			new_block->block_num = tmp;
+			DMDEBUG("%s corrupt %s data of block %u off",
+				__func__, RW(new_block->op), new_block->block_num);
 		}
 
 		list_add_tail(&new_block->list, &ic->inject_list);
