@@ -490,10 +490,23 @@ bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 	struct inject_rec *tmp;
 
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_BLOCK && tmp->block_num == blk
-			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s CORRUPT %s block %d", __func__, RW(op), blk);
-			return true;
+		if (tmp->type == DM_INJECT_F2FS_BLOCK && tmp->block_num == blk
+			&& (tmp->op < 0 || tmp->op == op) && !tmp->corruption_enabled) {
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Block: %d, %s] Decreased access freq to: %llu",
+					__func__, blk, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				DMDEBUG("%s CORRUPT %s block %d", __func__, RW(op), blk);
+				return true;
+			}
 		}
 	}
 	return false;
@@ -502,11 +515,25 @@ bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 bool f2fs_corrupt_sector(struct inject_c *ic, sector_t sec, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_SECTOR && tmp->sector_num == sec
-			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s CORRUPT %s sector %d", __func__, RW(op), sec);
-			return true;
+		if (tmp->type == DM_INJECT_F2FS_SECTOR && tmp->sector_num == sec
+			&& (tmp->op < 0 || tmp->op == op) && !tmp->corruption_enabled) {
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Sector: %lu, %s] Decreased access freq to: %llu",
+                                        __func__, sec, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				DMDEBUG("%s CORRUPT %s sector %lu", __func__, RW(op), sec);
+				return true;
+			}
 		}
 	}
 	return false;
@@ -584,11 +611,25 @@ bool f2fs_corrupt_inode_member(struct inject_c *ic, nid_t ino, int op, struct pa
 bool f2fs_corrupt_inode(struct inject_c *ic, nid_t ino, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
-			&& (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s CORRUPT %s inode %d", __func__, RW(op), ino);
-			return true;
+		if (tmp->type == DM_INJECT_F2FS_INODE && tmp->inode_num == ino
+			&& (tmp->op < 0 || tmp->op == op) && !tmp->corruption_enabled) {
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Inode: %d, %s] Decreased access freq to: %llu",
+                                        __func__, ino, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				DMDEBUG("%s CORRUPT %s inode %d", __func__, RW(op), ino);
+				return true;
+			}
 		}
 	}
 	return false;
@@ -608,15 +649,28 @@ void f2fs_print_seg_entries(struct f2fs_sb_info *sbi)
 
 // check inode against input to see if data corruption should take place
 // doesn't check for bio direction or anything
-bool f2fs_corrupt_data(struct inject_c *ic, nid_t ino, int off, int op)
+bool f2fs_corrupt_data(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
+
 	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->type == DM_INJECT_F2FS_DATA && tmp->inode_num == ino
-			&& (tmp->op < 0 || tmp->op == op)
-			&& (tmp->offset < 0 || tmp->offset == off)) {
-			DMDEBUG("%s CORRUPT %s inode %d data off %d", __func__, RW(op), ino, off);
-			return true;
+		if (tmp->type == DM_INJECT_F2FS_DATA && (tmp->op < 0 || tmp->op == op)
+			&& tmp->block_num == blk && !tmp->corruption_enabled) {
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Datablock: %u, %s] Decreased access freq to: %llu",
+					__func__, blk, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				DMDEBUG("%s CORRUPT %s datablock %u", __func__, RW(op), blk);
+				return true;
+			}
 		}
 	}
 	return false;
@@ -964,8 +1018,8 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 	switch(block_type) {
 		case DM_INJECT_F2FS_INODE:
 			ino = ino_of_node(page);
-			if(f2fs_corrupt_inode_member(ic, ino, op, page))
-				return DM_INJECT_F2FS_INODE;
+			if (f2fs_corrupt_inode_member(ic, ino, op, page))
+				return DM_INJECT_CORRUPT;
 			break;
 		default:
 			break;
