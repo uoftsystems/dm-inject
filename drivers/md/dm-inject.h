@@ -59,14 +59,12 @@ struct inject_rec {
 	struct list_head list;
 	int type;
 	int op;
-	union {
-		sector_t sector_num;
-		u32 block_num;
-		struct {
-		u32 inode_num;
-		int offset;
-		};
-	};
+	unsigned long long access_freq;
+	bool corruption_enabled;
+	sector_t sector_num;
+	u32 block_num;
+	u32 inode_num;
+	int offset;
 	char member[MEMBER_MAX_LENGTH + 1];
 	// EXT4 corruption parameters
 	long long unsigned number;
