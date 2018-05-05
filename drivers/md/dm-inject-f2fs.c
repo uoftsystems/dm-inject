@@ -14,6 +14,8 @@
 #define DM_MSG_PREFIX "inject f2fs"
 
 //F2FS Meta area
+#define DM_INJECT_F2FS_SECTOR	0x0001
+#define DM_INJECT_F2FS_BLOCK	0x0002
 #define DM_INJECT_F2FS_SB	0x0004
 #define DM_INJECT_F2FS_CP	0x0008
 #define DM_INJECT_F2FS_SIT	0x0010
@@ -805,19 +807,22 @@ bool f2fs_can_corrupt(struct inject_c *ic)
 bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio,
 			       struct bio_vec *bvec, sector_t sec)
 {
-	unsigned int iter;
+	if (!f2fs_can_corrupt(ic))
+		return DM_INJECT_NONE;
 
-	if(!f2fs_can_corrupt(ic))
-		return false;
+	/*if (bio_multiple_segments(bio))
+		DMDEBUG("%s multiple seg sec %d size %d idx %d done %d",
+			__func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size,
+			bio->bi_iter.bi_idx, bio->bi_iter.bi_bvec_done);
 
-	/*if(bio_multiple_segments(bio)) {
-		DMDEBUG("%s multiple seg sec %d size %d idx %d done %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_idx, bio->bi_iter.bi_bvec_done);
-	}*/
-	//DMDEBUG("%s max %d", __func__, max((bio)->bi_iter.bi_size, (bio)->bi_iter.bi_idx*PAGE_SIZE));
-	//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-	if(__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_WRITE))
-		return true;
-	return false;
+	DMDEBUG("%s max %d", __func__, max((bio)->bi_iter.bi_size,
+					   (bio)->bi_iter.bi_idx*PAGE_SIZE));
+	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
+		bvec->bv_len, bvec->bv_offset);
+	*/
+	if (__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_WRITE))
+		return DM_INJECT_ERROR;
+	return DM_INJECT_NONE;
 }
 
 //associated with end_io function in DM injector module
@@ -827,11 +832,14 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio,
 	if (!f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
-	//DMDEBUG("%s max %d", __func__, max((bio)->bi_iter.bi_size, (bio)->bi_iter.bi_idx*PAGE_SIZE));
-	//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-	if(__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_READ))
-		return true;
-	return false;
+	/*DMDEBUG("%s max %d", __func__, max((bio)->bi_iter.bi_size,
+					   (bio)->bi_iter.bi_idx*PAGE_SIZE));
+	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
+		bvec->bv_len, bvec->bv_offset);
+	*/
+	if (__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_READ))
+		return DM_INJECT_ERROR;
+	return DM_INJECT_NONE;
 }
 
 int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
@@ -854,34 +862,31 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 	return DM_INJECT_NONE;
 }
 
-int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio,
+			     struct bio_vec *bvec, sector_t sec)
 {
-	unsigned int iter;
-	int result = DM_INJECT_NONE;
-
-	if(!f2fs_can_corrupt(ic))
+	if (!f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
-	//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-	result = __f2fs_corrupt_data_dev(ic, bio, bvec, sec, REQ_OP_WRITE);
-	if(result != DM_INJECT_NONE)
-		return result;
-	return DM_INJECT_NONE;
-}
+	/*
+	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
+		bvec->bv_len, bvec->bv_offset);
+	*/
 
-int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+        return __f2fs_corrupt_data_dev(ic, bio, bvec, sec, REQ_OP_WRITE);
+ }
+
+int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio,
+			       struct bio_vec *bvec, sector_t sec)
 {
-	unsigned int iter;
-	int result = DM_INJECT_NONE;
-
-	if(!f2fs_can_corrupt(ic))
+	if (!f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
-	//DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page, bvec->bv_len, bvec->bv_offset);
-	result = __f2fs_corrupt_data_dev(ic, bio, bvec, sec, REQ_OP_READ);
-	if(result != DM_INJECT_NONE)
-		return result;
-	return DM_INJECT_NONE;
+	/*
+	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
+		bvec->bv_len, bvec->bv_offset);
+	*/
+	return __f2fs_corrupt_data_dev(ic, bio, bvec, sec, REQ_OP_READ);
 }
 
 static struct inject_fs_type f2fs_fs = {
