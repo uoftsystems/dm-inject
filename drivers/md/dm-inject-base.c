@@ -17,7 +17,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	int ret = 0;
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
-	char dummy, tmp_str[64];
+	char tmp_str[64], dummy;
 	struct dm_arg_set as;
 	const char *devname;
 	struct inject_fs_type *inject_fs_type;
@@ -54,7 +54,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (as.argc > 0 && sscanf(*as.argv, "%s%c", tmp_str, &dummy) == 1
 		&& !request_module("dm-inject-%s", tmp_str)) {
 		dm_shift_arg(&as);
-	} else if (request_module("dm-inject-f2fs") == 0) {
+	} else if (!request_module("dm-inject-f2fs")) {
 		strcpy(tmp_str, "f2fs");
 	} else {
 		DMDEBUG("Unable to request module dm-inject-%s", tmp_str);
@@ -70,7 +70,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	inject_fs_type = dm_find_inject_fs(tmp_str);
-	if (inject_fs_type != NULL) {
+	if (inject_fs_type) {
 		DMDEBUG("Found inject_fs_type %s, assign it to inject_c", tmp_str);
 		ic->fs_t = inject_fs_type;
 	} else {
@@ -111,8 +111,15 @@ bad:
 // Destructor
 static void inject_dtr(struct dm_target *ti)
 {
-	struct inject_c *ic = (struct inject_c *) ti->private;
+	struct inject_c *ic;
 	struct inject_rec *tmp, *tmp2;
+
+	if (!ti)
+		return;
+
+	ic = (struct inject_c *) ti->private;
+	if (!ic)
+		return;
 
 	dm_put_device(ti, ic->dev);
 	ic->fs_t->dtr(ic);
@@ -121,6 +128,10 @@ static void inject_dtr(struct dm_target *ti)
 		kfree(tmp);
 	}
 	kfree(ic);
+
+	/* Explicitly set the private member equal to NULL to avoid
+	 * double free operations. */
+	ti->private = NULL;
 }
 
 /*
