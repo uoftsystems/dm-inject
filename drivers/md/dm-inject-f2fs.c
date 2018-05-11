@@ -158,7 +158,16 @@ int f2fs_inject_ctr(struct inject_c *ic)
 
 void f2fs_inject_dtr(struct inject_c *ic)
 {
-	kfree((struct f2fs_context *) ic->context);
+	if (!ic)
+		return;
+
+	if (ic->context) {
+		kfree((struct f2fs_context *) ic->context);
+
+		/* Explicitly set the context equal to NULL to avoid
+		 * double free operations. */
+		ic->context = NULL;
+	}
 }
 
 int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
