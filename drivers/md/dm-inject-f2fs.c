@@ -72,23 +72,6 @@ void f2fs_init_sb_info(struct inject_c *ic, struct f2fs_sb_info *sbi)
 	sbi->root_ino_num = le32_to_cpu(raw_super->root_ino);
 	sbi->node_ino_num = le32_to_cpu(raw_super->node_ino);
 	sbi->meta_ino_num = le32_to_cpu(raw_super->meta_ino);
-	sbi->cur_victim_sec = NULL_SECNO;
-	//sbi->max_victim_search = DEF_MAX_VICTIM_SEARCH;
-
-	sbi->dir_level = DEF_DIR_LEVEL;
-	sbi->interval_time[CP_TIME] = DEF_CP_INTERVAL;
-	sbi->interval_time[REQ_TIME] = DEF_IDLE_INTERVAL;
-	//clear_sbi_flag(sbi, SBI_NEED_FSCK);
-
-	for (i = 0; i < NR_COUNT_TYPE; i++)
-		atomic_set(&sbi->nr_pages[i], 0);
-
-	INIT_LIST_HEAD(&sbi->s_list);
-	mutex_init(&sbi->umount_mutex);
-	for (i = 0; i < NR_PAGE_TYPE - 1; i++)
-		for (j = HOT; j < NR_TEMP_TYPE; j++)
-			mutex_init(&sbi->wio_mutex[i][j]);
-	spin_lock_init(&sbi->cp_lock);
 }
 
 int f2fs_get_partial_sb(struct inject_c *ic)
