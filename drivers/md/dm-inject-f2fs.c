@@ -399,7 +399,7 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 
 	for (i = 0; i < sbi->s_ndevs; i++) {
 		if (FDEV(i).start_blk <= blk_addr &&
-					FDEV(i).end_blk >= blk_addr) {
+		    FDEV(i).end_blk >= blk_addr) {
 			blk_addr -= FDEV(i).start_blk;
 			bdev = FDEV(i).bdev;
 			break;
@@ -1244,7 +1244,7 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 {
 	struct page *page = bvec->bv_page;
 	int block_type = __f2fs_block_id(ic, bio, bvec, sec, op);
-	block_t blk;
+	block_t blk = SECTOR_TO_BLOCK(sec);
 	nid_t ino;
 
 	/*
@@ -1254,7 +1254,6 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 	if (ic->global_corrupt_enable) {
 	        struct inject_rec *rec;
 
-		blk = SECTOR_TO_BLOCK(sec);
 		list_for_each_entry(rec, &ic->inject_list, list) {
 			if (rec->block_num == blk && (rec->op < 0 || rec->op == op)) {
 				memset(page_address(page), 0, PAGE_SIZE);
@@ -1272,33 +1271,27 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 				return DM_INJECT_CORRUPT;
 			break;
                 case DM_INJECT_F2FS_NAT:
-                        blk = SECTOR_TO_BLOCK(sec);
                         if (f2fs_corrupt_nat_block(ic, blk, op, page))
 				return DM_INJECT_CORRUPT;
                         break;
 		case DM_INJECT_F2FS_SIT:
-			blk = SECTOR_TO_BLOCK(sec);
 			if (f2fs_corrupt_sit_block(ic, blk, op, page))
 				return DM_INJECT_CORRUPT;
 			break;
                 case DM_INJECT_F2FS_SSA:
-                        blk = SECTOR_TO_BLOCK(sec);
                         if (f2fs_corrupt_ssa_block(ic, blk, op, page))
                                 return DM_INJECT_CORRUPT;
                         break;
                 case DM_INJECT_F2FS_BLOCK:
-                        blk = SECTOR_TO_BLOCK(sec);
                         if (__f2fs_corrupt_block(ic, blk, op, page, false))
                                 return DM_INJECT_CORRUPT;
                         break;
 		case DM_INJECT_F2FS_DATA:
-			blk = SECTOR_TO_BLOCK(sec);
 			if (f2fs_corrupt_datablock(ic, blk, op, page))
 				return DM_INJECT_CORRUPT;
 			break;
 		case DM_INJECT_F2FS_DNODE:
 		case DM_INJECT_F2FS_INDNODE:
-			blk = SECTOR_TO_BLOCK(sec);
 			if (__f2fs_corrupt_block(ic, blk, op, page, true))
 				return DM_INJECT_CORRUPT;
 			break;
