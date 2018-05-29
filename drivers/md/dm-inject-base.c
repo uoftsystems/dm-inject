@@ -70,7 +70,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	inject_fs_type = dm_find_inject_fs(tmp_str);
-	if (inject_fs_type) {
+	if (inject_fs_type && try_module_get(inject_fs_type->module)) {
 		DMDEBUG("Found inject_fs_type %s, assign it to inject_c", tmp_str);
 		ic->fs_t = inject_fs_type;
 	} else {
@@ -123,6 +123,7 @@ static void inject_dtr(struct dm_target *ti)
 
 	dm_put_device(ti, ic->dev);
 	ic->fs_t->dtr(ic);
+	module_put(ic->fs_t->module);
 	list_for_each_entry_safe(tmp, tmp2, &ic->inject_list, list) {
 		list_del(&tmp->list);
 		kfree(tmp);
