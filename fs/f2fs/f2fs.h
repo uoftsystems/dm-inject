@@ -2494,6 +2494,8 @@ static inline bool f2fs_skip_inode_update(struct inode *inode, int dsync)
 
 static inline bool f2fs_readonly(struct super_block *sb)
 {
+	if (sb_rdonly(sb))
+		printk("%sF2FS-fs in %s read_only flag: 1\n", KERN_INFO, __func__);
 	return sb_rdonly(sb);
 }
 
