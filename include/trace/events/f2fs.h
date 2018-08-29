@@ -660,6 +660,52 @@ TRACE_EVENT(f2fs_dirty_sit_entry,
 		__entry->valid_blocks,
 		show_data_type(__entry->type))
 );
+
+TRACE_EVENT(f2fs_commit_super_start,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, bool recover),
+
+	TP_ARGS(sbi, recover),
+
+	TP_STRUCT__entry(
+		__field(dev_t,  dev)
+		__field(bool,	recover)
+	),
+
+	TP_fast_assign(
+		__entry->dev    	= sbi->sb->s_dev;
+		__entry->recover	= recover;
+	),
+
+	TP_printk("dev = (%d,%d), rec_flag: %d",
+		show_dev(__entry->dev),
+		__entry->recover)
+);
+
+TRACE_EVENT(f2fs_commit_super_end,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, bool recover, int err),
+
+	TP_ARGS(sbi, recover, err),
+
+	TP_STRUCT__entry(
+		__field(dev_t,  dev)
+		__field(bool,	recover)
+		__field(int,	err)
+	),
+
+	TP_fast_assign(
+		__entry->dev    	= sbi->sb->s_dev;
+		__entry->recover	= recover;
+		__entry->err		= err;
+	),
+
+	TP_printk("dev = (%d,%d), rec_flag: %d err: %d",
+		show_dev(__entry->dev),
+		__entry->recover,
+		__entry->err)
+);
+
 // ---------------------------------------------------------------------------------------- //
 
 DEFINE_EVENT(f2fs__inode, f2fs_iget,

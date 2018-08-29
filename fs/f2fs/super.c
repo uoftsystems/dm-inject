@@ -2457,6 +2457,9 @@ int f2fs_commit_super(struct f2fs_sb_info *sbi, bool recover)
 	struct buffer_head *bh;
 	int err;
 
+	f2fs_msg(sbi->sb, KERN_INFO, "%s: %d", __func__, recover);
+	trace_f2fs_commit_super_start(sbi, recover);
+
 	if ((recover && f2fs_readonly(sbi->sb)) ||
 				bdev_read_only(sbi->sb->s_bdev)) {
 		set_sbi_flag(sbi, SBI_NEED_SB_WRITE);
@@ -2471,8 +2474,10 @@ int f2fs_commit_super(struct f2fs_sb_info *sbi, bool recover)
 	brelse(bh);
 
 	/* if we are in recovery path, skip writing valid superblock */
-	if (recover || err)
+	if (recover || err) {
+		trace_f2fs_commit_super_end(sbi, recover, err);
 		return err;
+	}
 
 	/* write current valid superblock */
 	bh = sb_bread(sbi->sb, sbi->valid_super_block);
@@ -2480,6 +2485,8 @@ int f2fs_commit_super(struct f2fs_sb_info *sbi, bool recover)
 		return -EIO;
 	err = __f2fs_commit_super(bh, F2FS_RAW_SUPER(sbi));
 	brelse(bh);
+
+	trace_f2fs_commit_super_end(sbi, recover, err);
 	return err;
 }
 
