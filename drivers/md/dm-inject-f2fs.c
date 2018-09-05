@@ -55,7 +55,6 @@ struct f2fs_context {
 void f2fs_init_sb_info(struct inject_c *ic, struct f2fs_sb_info *sbi)
 {
 	struct f2fs_super_block *raw_super = sbi->raw_super;
-	int i, j;
 
 	sbi->log_sectors_per_block =
 		le32_to_cpu(raw_super->log_sectors_per_block);
@@ -81,22 +80,9 @@ int f2fs_get_partial_sb(struct inject_c *ic)
 	struct page *my_bio_page;
 	int ret = 0;
 
-	//try submit_bio
+	// Allocate a new bio.
 	my_bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
-
-	/* my_bio = bio_alloc(GFP_KERNEL, 1);
-	if (!my_bio) {
-		DMDEBUG("Bio_alloc failed!");
-		return -ENOMEM;
-        } */
-
 	my_bio_page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
-	/* my_bio_page = alloc_page(GFP_KERNEL);
-	if (!my_bio_page) {
-		DMDEBUG("Alloc_page failed!");
-		ret = -ENOMEM;
-		goto bad_bio;
-        } */
 
 	bio_set_dev(my_bio, ic->dev->bdev);
 	my_bio->bi_iter.bi_sector = 0;
@@ -113,26 +99,19 @@ int f2fs_get_partial_sb(struct inject_c *ic)
 	bio_set_op_attrs(my_bio, REQ_OP_READ, REQ_META | REQ_PRIO | REQ_SYNC);
 
 	ret = submit_bio_wait(my_bio);
-	DMDEBUG("%s my bio %p page %p ret %d", __func__, my_bio, my_bio_page, ret);
-
-	//got block 0, let's try and extract sb
 	if (!ret) {
+		//got block 0, let's try and extract sb
 		unsigned char *my_page_addr = (unsigned char *)
                         page_address(my_bio->bi_io_vec->bv_page);
 		memcpy(&fsc->f2fs_sb_copy, my_page_addr + F2FS_SUPER_OFFSET,
                        sizeof(struct f2fs_super_block));
 		fsc->f2fs_sbi_copy.raw_super = &fsc->f2fs_sb_copy;
 		f2fs_init_sb_info(ic, &fsc->f2fs_sbi_copy);
-		DMDEBUG("%s sb_copy %p sbi_copy %p sbi->raw %p", __func__,
-			&fsc->f2fs_sb_copy, &fsc->f2fs_sbi_copy,
-                        (&fsc->f2fs_sbi_copy)->raw_super);
 		fsc->partial_sbi = true;
 		fsc->f2fs_sbi = &fsc->f2fs_sbi_copy;
-		DMDEBUG("%s partial_sbi copied %p super %p", __func__,
-                        fsc->f2fs_sbi, F2FS_RAW_SUPER(fsc->f2fs_sbi));
 	}
-
 	bio_free_pages(my_bio);
+
 bad_bio:
 	bio_put(my_bio);
 
@@ -180,10 +159,12 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	char mode;
 	struct inject_rec *new_block;
 
+	/* Prepare the specification for parsing arguments related to inodes. */
+	sprintf(spec, "%%u:%%llu:%%%ds", MEMBER_MAX_LENGTH);
+
 	// read sectors to corrupt
 	if (as->argc > 0) {
 		ic->num_corrupt = as->argc;
-		//ic->corrupt_sector = (sector_t*) kmalloc(ic->num_corrupt * sizeof(sector_t), GFP_KERNEL);
 		ic->corrupt_sector = NULL;
 		ic->corrupt_block = (block_t *) kmalloc(ic->num_corrupt * sizeof(block_t), GFP_NOIO);
 		DMDEBUG("%s num %d size %lu", __func__, ic->num_corrupt, sizeof(block_t));
@@ -199,11 +180,9 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		int new_op = -1;
 		bool corrupt_flag = false;
 
+		/* Reset all necessary fields. */
 		tmp = 0;
 		tmp_access = 1;
-
-		/* Prepare the specification for parsing arguments related to inodes. */
-		sprintf(spec, "%%u:%%llu:%%%ds", MEMBER_MAX_LENGTH);
 		tmp_str[0] = '\0';
 
 		if (*cur_arg == 'C') {
@@ -300,10 +279,6 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			}
 		}
 
-		//ic->corrupt_sector[i] = tmp;
-		//DMDEBUG("%s corrupt sector %d", __func__, ic->corrupt_sector[i]);
-		//ic->corrupt_block[i] = tmp;
-		//add to list
 		new_block = kzalloc(sizeof(struct inject_rec), GFP_NOIO);
 		if (!new_block) {
 			error = "Memory allocation error!";
@@ -414,70 +389,6 @@ struct block_device *f2fs_target_device(struct f2fs_sb_info *sbi,
 	return bdev;
 }
 
-//from f2fs_submit_page_bio
-/*static int f2fs_inject_submit_page_bio(struct inject_c *ic, struct page *page,
-				       block_t blk_addr, int op)
-{
-	int ret;
-	struct bio *bio;
-
-	//__bio_alloc / f2fs_bio_alloc
-	//bio = bio_alloc(GFP_NOIO | __GFP_NOFAIL, 1);
-	bio = bio_alloc(GFP_KERNEL, 1);
-	if (!bio) {
-		DMDEBUG("[%s]: Memory allocation failed!", __func__);
-		return -ENOMEM;
-	}
-
-	//TODO: this is not the right bdev
-	//f2fs is mounted on TOP of the mapper,
-	//we need to go deeper to lower level
-	//ic->dev->bdev
-	//f2fs_target_device(sbi, blk_addr, bio);
-	bio_set_dev(bio, ic->dev->bdev);
-	bio->bi_iter.bi_sector = SECTOR_FROM_BLOCK(blk_addr);
-	bio->bi_end_io = NULL;
-	bio->bi_private = NULL;
-
-	//bio_add_page
-	if (bio_add_page(bio, page, PAGE_SIZE, 0) < PAGE_SIZE) {
-		bio_put(bio);
-		return -EFAULT;
-	}
-
-	//bio->bi_opf = op;
-	bio_set_op_attrs(bio, op, REQ_META|REQ_PRIO|REQ_SYNC);
-
-	//submit_bio_wait
-	//submit_bio(bio);
-
-	DMDEBUG("%s blk_addr %u page %p disk %p sec %lu", __func__, blk_addr,
-		page, bio->bi_disk, bio->bi_iter.bi_sector);
-	ret = submit_bio_wait(bio);
-	bio_put(bio);
-
-	return ret;
-}*/
-
-//issue bios to read pages
-/*static struct page *f2fs_inject_read_page(struct inject_c *ic, block_t blk_addr)
-{
-	struct page *page;
-	//page = alloc_page(GFP_NOIO | __GFP_NOFAIL);
-	page = alloc_page(GFP_KERNEL);
-	if (!page)
-		return NULL;
-
-	DMDEBUG("%s alloc_page %p", __func__, page);
-
-	if (f2fs_inject_submit_page_bio(ic, page, blk_addr, REQ_OP_READ)) {
-		//__free_page(page);
-		put_page(page);
-		return NULL;
-	}
-	return page;
-}*/
-
 bool f2fs_corrupt_block(struct inject_c *ic, block_t blk, int op)
 {
 	struct inject_rec *tmp;
@@ -579,7 +490,6 @@ bool f2fs_corrupt_sit_block(struct inject_c *ic, block_t blk, int op,
 		if (tmp->type == DM_INJECT_F2FS_SIT && tmp->corruption_enabled
 		    && (!tmp->block_num || tmp->block_num == blk)
 		    && (tmp->op < 0 || tmp->op == op)) {
-			DMDEBUG("%s CORRUPT %s SIT blk %u", __func__, RW(op), blk);
 
 			if (f2fs_inject_rec_has_member(tmp)) {
 				struct f2fs_sit_block *sit_block =
@@ -605,13 +515,16 @@ bool f2fs_corrupt_sit_block(struct inject_c *ic, block_t blk, int op,
 						DMDEBUG("%s CORRUPT index %d member %s",
                                                         __func__, i, tmp->member);
 					} else {
-						DMDEBUG("%s CORRUPT inode %s (zero)",
-							__func__, tmp->member);
 						memset((void *) sit_block, 0, PAGE_SIZE);
+						DMDEBUG("%s CORRUPT (zero) %s SIT blk %u",
+							__func__, RW(op), blk);
+						break;
 					}
 				}
-			} else
+			} else {
+				DMDEBUG("%s CORRUPT (zero) %s SIT blk %u", __func__, RW(op), blk);
 				memset(page_address(page), 0, PAGE_SIZE);
+			}
 
 			return true;
                 }
@@ -692,18 +605,18 @@ bool f2fs_corrupt_nat_block(struct inject_c *ic, block_t blk, int op,
 					struct f2fs_nat_entry *nat_entry = &(nat_block->entries[i]);
 					if (le32_to_cpu(nat_entry->ino) == tmp->inode_num) {
 						nat_entry->ino = 0;
+						nat_entry->block_addr = 0;
+
 						DMDEBUG("%s CORRUPT inode %d (nat entry) %s blk %u",
 							__func__, tmp->inode_num, RW(op), blk);
 						DMDEBUG("%s CORRUPT (nat entry) old: %d new: 0",
 							__func__, tmp->inode_num);
 						DMDEBUG("%s CORRUPT (nat entry) old: %u new: 0",
 							__func__, le32_to_cpu(nat_entry->block_addr));
-						nat_entry->block_addr = 0;
+
+						corrupted = true;
 					}
 				}
-
-				//return true;
-				corrupted = true;
 			} else {
 				memset((void *) nat_block, 0, PAGE_SIZE);
 				DMDEBUG("%s CORRUPT NAT %s blk %u", __func__, RW(op), blk);
@@ -930,32 +843,32 @@ int __f2fs_block_id(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec,
 
 	if (cp_blkaddr <= blk &&
 		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
-		if (!fsc->partial_sbi)
-			DMDEBUG("%s CP %s blk %d compact %d", __func__,
-				RW(bio_op(bio)), blk,
-                                is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
-		else
-			DMDEBUG("%s CP %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//if (!fsc->partial_sbi)
+		//	DMDEBUG("%s CP %s blk %d compact %d", __func__,
+		//		RW(bio_op(bio)), blk,
+                //                is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
+		//else
+		//	DMDEBUG("%s CP %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return DM_INJECT_F2FS_CP;
 
 	} else if (sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
-		DMDEBUG("%s SIT %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//DMDEBUG("%s SIT %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return DM_INJECT_F2FS_SIT;
 
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
-		DMDEBUG("%s NAT %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//DMDEBUG("%s NAT %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return DM_INJECT_F2FS_NAT;
 
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
-		DMDEBUG("%s SSA %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//DMDEBUG("%s SSA %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return DM_INJECT_F2FS_SSA;
 
 	} else if (fsc->partial_sbi && main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
-		DMDEBUG("%s MAIN %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//DMDEBUG("%s MAIN %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return DM_INJECT_F2FS_MAIN;
 
 	} else if (!fsc->partial_sbi && main_blkaddr <= blk &&
@@ -967,21 +880,21 @@ int __f2fs_block_id(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec,
 		struct seg_entry *seg = get_seg_entry(sbi, segno);
 		unsigned char type = seg->type;
 
-		DMDEBUG("%s MAIN %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//DMDEBUG("%s MAIN %s blk %d", __func__, RW(bio_op(bio)), blk);
 		if (IS_NODESEG(type)) {
-			struct f2fs_node *node = F2FS_NODE(page);
+			//struct f2fs_node *node = F2FS_NODE(page);
 			nid_t num = nid_of_node(page);
 			if (IS_INODE(page) && num >= F2FS_RESERVED_NODE_NUM) {
-				DMDEBUG("%s INODE %s num %d name '%.*s' blk %d seg %u%s",
-					__func__, RW(bio_op(bio)), num,
-                                        le32_to_cpu(node->i.i_namelen),
-					node->i.i_name, blk, segno,
-					(node->i.i_inline & F2FS_INLINE_DATA) ?" inline data" : "");
+				//DMDEBUG("%s INODE %s num %d name '%.*s' blk %d seg %u%s",
+				//	__func__, RW(bio_op(bio)), num,
+                                //        le32_to_cpu(node->i.i_namelen),
+				//	node->i.i_name, blk, segno,
+				//	(node->i.i_inline & F2FS_INLINE_DATA) ?" inline data" : "");
 				return DM_INJECT_F2FS_INODE;
 
 			} else {
-				DMDEBUG("%s NODE %s num %d blk %d seg %u",
-                                        __func__, RW(bio_op(bio)), num, blk, segno);
+				//DMDEBUG("%s NODE %s num %d blk %d seg %u",
+                                //        __func__, RW(bio_op(bio)), num, blk, segno);
 				//return DM_INJECT_F2FS_DNODE | DM_INJECT_F2FS_INDNODE;
 				return DM_INJECT_F2FS_DNODE;
 			}
@@ -1023,23 +936,24 @@ int __f2fs_block_id(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec,
 						if (cache_page) {
 							found_inode = true;
 							inode_node = F2FS_NODE(cache_page);
-							DMDEBUG("%s ne nid %d ino %d blk %d", __func__, ne->ni.nid,
-								ne->ni.ino, ne->ni.blk_addr);
-							DMDEBUG("%s page %p dir %d name %.*s", __func__, cache_page,
-								S_ISDIR(cpu_to_le16(inode_node->i.i_mode)),
-								le32_to_cpu(inode_node->i.i_namelen), inode_node->i.i_name);
+							//DMDEBUG("%s ne nid %d ino %d blk %d", __func__, ne->ni.nid,
+							//	ne->ni.ino, ne->ni.blk_addr);
+							//DMDEBUG("%s page %p dir %d name %.*s", __func__, cache_page,
+							//	S_ISDIR(cpu_to_le16(inode_node->i.i_mode)),
+							//	le32_to_cpu(inode_node->i.i_namelen), inode_node->i.i_name);
 						}
 					}
 				}
 			}
+
 			if (found_inode) {
-				DMDEBUG("%s DATA %s blk %d seg %u inode %d name '%.*s' dir %d",
-					__func__, RW(bio_op(bio)), blk, segno, ne->ni.ino,
-					le32_to_cpu(inode_node->i.i_namelen), inode_node->i.i_name,
-					S_ISDIR(cpu_to_le16(inode_node->i.i_mode)));
+				//DMDEBUG("%s DATA %s blk %d seg %u inode %d name '%.*s' dir %d",
+				//	__func__, RW(bio_op(bio)), blk, segno, ne->ni.ino,
+				//	le32_to_cpu(inode_node->i.i_namelen), inode_node->i.i_name,
+				//	S_ISDIR(cpu_to_le16(inode_node->i.i_mode)));
 				put_page(cache_page);
-			} else
-				DMDEBUG("%s DATA %s blk %d seg %u", __func__, RW(bio_op(bio)), blk, segno);
+			} //else
+			//	DMDEBUG("%s DATA %s blk %d seg %u", __func__, RW(bio_op(bio)), blk, segno);
 
 			return DM_INJECT_F2FS_DATA;
 		}
@@ -1079,27 +993,27 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
 
 	if (cp_blkaddr <= blk &&
 		blk < cp_blkaddr + (segment_count_ckpt << log_blocks_per_seg)) {
-		if (!fsc->partial_sbi)
-			DMDEBUG("%s CP %s blk %d compact %d", __func__, RW(bio_op(bio)), blk,
-				is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
-		else
-			DMDEBUG("%s CP %s blk %d", __func__, RW(bio_op(bio)), blk);
+		//if (!fsc->partial_sbi)
+		//	DMDEBUG("%s CP %s blk %d compact %d", __func__, RW(bio_op(bio)), blk,
+		//		is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG));
+		//else
+		//	DMDEBUG("%s CP %s blk %d", __func__, RW(bio_op(bio)), blk);
 		return f2fs_corrupt_checkpoint(ic, op);
 	} else if (sit_blkaddr <= blk &&
 		blk < sit_blkaddr + (segment_count_sit << log_blocks_per_seg)) {
-		DMDEBUG("%s SIT blk %d", __func__, blk);
+		//DMDEBUG("%s SIT blk %d", __func__, blk);
 		return f2fs_corrupt_sit(ic, blk, op);
 	} else if (nat_blkaddr <= blk &&
 		blk < nat_blkaddr + (segment_count_nat << log_blocks_per_seg)) {
-		DMDEBUG("%s NAT blk %d", __func__, blk);
+		//DMDEBUG("%s NAT blk %d", __func__, blk);
 		return f2fs_corrupt_nat(ic, blk, op);
 	} else if (ssa_blkaddr <= blk &&
 		blk < ssa_blkaddr + (segment_count_ssa << log_blocks_per_seg)) {
-		DMDEBUG("%s SSA blk %d", __func__, blk);
+		//DMDEBUG("%s SSA blk %d", __func__, blk);
 		return f2fs_corrupt_ssa(ic, blk, op);
 	} else if (fsc->partial_sbi && main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
-		DMDEBUG("%s MAIN blk %d", __func__, blk);
+		//DMDEBUG("%s MAIN blk %d", __func__, blk);
 		return false;
 	} else if (!fsc->partial_sbi && main_blkaddr <= blk &&
 		blk < main_blkaddr + (segment_count_main << log_blocks_per_seg)) {
@@ -1111,16 +1025,16 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
 		unsigned char type = seg->type;
 		nid_t num = nid_of_node(page);
 
-		DMDEBUG("%s seg %d type %d vblks %d", __func__, segno, seg->type, seg->valid_blocks);
-		if (is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG))
-			DMDEBUG("%s ckpt is compact", __func__);
+		//DMDEBUG("%s seg %d type %d vblks %d", __func__, segno, seg->type, seg->valid_blocks);
+		//if (is_set_ckpt_flags(sbi, CP_COMPACT_SUM_FLAG))
+		//	DMDEBUG("%s ckpt is compact", __func__);
 
 		if (IS_NODESEG(type) && IS_INODE(page)
 			&& num >= F2FS_RESERVED_NODE_NUM) {
 			struct f2fs_node *node = F2FS_NODE(page);
-			DMDEBUG("%s INODE %s num %d blk %d seg %u%s", __func__,
-                                RW(bio_op(bio)), num, blk, segno,
-				(node->i.i_inline & F2FS_INLINE_DATA)? " inline data" : "");
+			//DMDEBUG("%s INODE %s num %d blk %d seg %u%s", __func__,
+			//	RW(bio_op(bio)), num, blk, segno,
+			//	(node->i.i_inline & F2FS_INLINE_DATA)? " inline data" : "");
 
 			if (f2fs_corrupt_inode(ic, num, op))
 				return true;
@@ -1128,19 +1042,19 @@ bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
                         //what about INLINE_DENTRY flag?
 			if (node->i.i_inline & F2FS_INLINE_DATA &&
                             f2fs_corrupt_data(ic, blk, op)) {
-				DMDEBUG("%s corrupting INODE with INLINE DATA", __func__);
+				//DMDEBUG("%s corrupting INODE with INLINE DATA", __func__);
 				return true;
 			}
 
 		} else if (IS_NODESEG(type)) {
-			DMDEBUG("%s NODE %s num %d blk %d seg %u", __func__,
-                                RW(bio_op(bio)), num, blk, segno);
+			//DMDEBUG("%s NODE %s num %d blk %d seg %u", __func__,
+                        //        RW(bio_op(bio)), num, blk, segno);
 
 			if (f2fs_corrupt_dnode(ic, blk, op))
 				return true;
 		} else {
-			DMDEBUG("%s DATA %s blk %d seg %u", __func__,
-                                RW(bio_op(bio)), blk, segno);
+			//DMDEBUG("%s DATA %s blk %d seg %u", __func__,
+                        //        RW(bio_op(bio)), blk, segno);
 
 			if (f2fs_corrupt_data(ic, blk, op))
 				return true;
@@ -1164,15 +1078,15 @@ int f2fs_get_full_sb(struct inject_c *ic)
 	sb = get_bdev_sb(ic);
 
 	if (sb && IS_F2FS(sb)) {
-		struct f2fs_super_block *from_bdev = F2FS_RAW_SUPER(F2FS_SB(sb));
-		int ret = memcmp(from_bdev, &fsc->f2fs_sb_copy, sizeof(struct f2fs_super_block));
+		//struct f2fs_super_block *from_bdev = F2FS_RAW_SUPER(F2FS_SB(sb));
+		//int ret = memcmp(from_bdev, &fsc->f2fs_sb_copy, sizeof(struct f2fs_super_block));
 
 		sbi = F2FS_SB(sb);
 		fsc->f2fs_sbi = sbi;
 		fsc->partial_sbi = false;
 
-		DMDEBUG("%s full_sbi %p sb %p fsc->sb %p memcmp %d", __func__,
-			fsc->f2fs_sbi, from_bdev, &fsc->f2fs_sb_copy, ret);
+		//DMDEBUG("%s full_sbi %p sb %p fsc->sb %p memcmp %d", __func__,
+		//	fsc->f2fs_sbi, from_bdev, &fsc->f2fs_sb_copy, ret);
 
 		return 1;
 	}
@@ -1188,8 +1102,10 @@ bool f2fs_can_corrupt(struct inject_c *ic)
 	//already have full or partial sb
 	if (fsc->f2fs_sbi != &fsc->f2fs_sbi_copy)
 		return true;
-	else if (fsc->partial_sbi)
-		ret = true; //move on to try to get full sb
+	else if (fsc->partial_sbi) {
+		//move on to try to get full sb
+		ret = true;
+	}
 
 	//none or partial, but fs is mounted
 	//so we can try to get full sb

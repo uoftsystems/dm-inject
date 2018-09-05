@@ -135,88 +135,18 @@ static void inject_dtr(struct dm_target *ti)
 	ti->private = NULL;
 }
 
-/*
-// check if a particular sector is in the list to corrupt
-static int check_corrupt_sector(struct inject_c *ic, sector_t s)
-{
-	int i;
-	if (ic->corrupt_sector == NULL){
-		DMDEBUG("%s NULL", __func__);
-		return 0;
-	}
-	for (i=0;i<ic->num_corrupt;i++) {
-		DMDEBUG("%s %d %d", __func__, i, ic->corrupt_sector[i]);
-		if (s == ic->corrupt_sector[i])
-			return 1;
-	}
-	return 0;
-}
-
-static int check_corrupt_block(struct inject_c *ic, u32 blk)
-{
-	int i;
-	//DMDEBUG("%s %d", __func__, blk);
-	if (ic->corrupt_block == NULL) {
-		//DMDEBUG("%s NULL", __func__);
-		return 0;
-	}
-	for (i=0;i<ic->num_corrupt;i++) {
-		//DMDEBUG("%s %d %d", __func__, i, ic->corrupt_block[i]);
-		if (blk == ic->corrupt_block[i])
-			return 1;
-	}
-	return 0;
-}*/
-
-//from f2fs/node.c get_node_info
-//without reading the disk
-
-/*
-static int f2fs_get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
-{
-	struct f2fs_nm_info *nm_i = NM_I(sbi);
-	struct curseg_info *curseg = CURSEG_I(sbi, CURSEG_HOT_DATA);
-	struct f2fs_journal *journal = curseg->journal;
-	struct f2fs_nat_entry ne;
-	struct nat_entry *e;
-	int i;
-
-	ni->nid = nid;
-
-	//chck nat cache
-	down_read(&nm_i->nat_tree_lock);
-	//e = __lookup_nat_cache(nm_i, nid);
-	if (e) {
-		ni->ino = nat_get_ino(e);
-		ni->blk_addr = nat_get_blkaddr(e)
-	}
-
-	//check current segment summary
-	down_read(&curseg->journal_rwsem);
-	//i = lookup_journal_in_cursum(journal, NAT_JOURNAL, nid, 0);
-	if (i >= 0) {
-		ne = nat_in_journal(journal, i);
-		node_info_from_raw_nat(ni, &ne);
-	}
-	up_read(&curseg->journal_rwsem);
-	if (i >= 0)
-		goto found;
-
-found:
-	up_read(&nm_i->nat_tree_lock);
-}*/
-
 // Mapper
 static int inject_map(struct dm_target *ti, struct bio *bio)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	int ret = DM_MAPIO_SUBMITTED;
+	int ret = DM_MAPIO_SUBMITTED, retval;
 	struct bio_vec *bvec;
 	unsigned int iter;
 
-	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+	DMDEBUG("%s bio op %d sector %lu", __func__, bio_op(bio),
+		bio->bi_iter.bi_sector);
 
-	//drop read-ahead.
+	// Drop read-ahead.
 	if (bio->bi_opf & REQ_RAHEAD) {
 		DMDEBUG("%s fail RAHEAD", __func__);
 		return DM_MAPIO_KILL;
@@ -235,16 +165,27 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	if (ic->inject_enable) {
 		if (bio_op(bio) == REQ_OP_WRITE) {
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
-				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
-				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
+				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)),
+				//		bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__,
+				//		bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
+
                                 /*
                                  * In case of data corruption, re-map it as expected.
                                  * Otherwise, check if the operation must be dropped.
                                  */
-				if (!ic->fs_t->data_to_dev(ic, bio, bvec, sec))
-					if (ic->fs_t->block_to_dev(ic, bio, bvec, sec))
-                                                return DM_MAPIO_KILL;
+				retval = ic->fs_t->data_to_dev(ic, bio, bvec, sec);
+				//DMDEBUG("%s retval: %d sec: %lu", __func__, retval, sec);
+				if (!retval) {
+					if ((retval = ic->fs_t->block_to_dev(ic, bio, bvec, sec))) {
+						DMDEBUG("%s retval: %d sec: %lu", __func__, retval, sec);
+						bio_io_error(bio);
+
+                                                //return DM_MAPIO_KILL;
+						return DM_MAPIO_SUBMITTED;
+					}
+				}
 			}
 		}
         }
@@ -260,7 +201,6 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 		ret = DM_MAPIO_REMAPPED;
 	}
 
-	//dump_stack();
 	return ret;
 }
 
@@ -283,7 +223,8 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 			//sector_t sec = bio->bi_iter.bi_sector - 8;
 
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
-			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
+			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size,
+			//		bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
 				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page,
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
@@ -296,7 +237,7 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 				 * Otherwise, check if the operation must be dropped.
 				 */
 				ret = ic->fs_t->data_from_dev(ic, bio, bvec, sec);
-				DMDEBUG("%s ret: %d sec: %lu", __func__, ret, sec);
+				//DMDEBUG("%s ret: %d sec: %lu", __func__, ret, sec);
 				if (!ret && ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
 					DMDEBUG("%s error sec: %lu", __func__, sec);
 					*error = BLK_STS_IOERR;
@@ -353,8 +294,9 @@ static int __init dm_inject_init(void)
 {
 	int r = dm_register_target(&inject_target);
 	if (r < 0)
-		DMERR("dm_inject register failed %d", r);
-	DMDEBUG("dm-inject target registered");
+		DMERR("dm-inject register failed %d", r);
+	else
+		DMDEBUG("dm-inject target registered");
 
 	return r;
 }
