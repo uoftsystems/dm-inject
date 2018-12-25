@@ -46,6 +46,8 @@ enum fs {
 #define DM_INJECT_NONE		0x0000
 #define DM_INJECT_ERROR		0x0001
 #define DM_INJECT_CORRUPT	0x0002
+#define DM_INJECT_DROPPED	0x0004
+#define DM_INJECT_SHORN		0x0008
 
 enum inject_method {
 	DM_INJECT_FAIL_BLOCK,
