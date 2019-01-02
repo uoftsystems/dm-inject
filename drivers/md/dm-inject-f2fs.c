@@ -1199,7 +1199,7 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
                                 return DM_INJECT_CORRUPT;
                         break;
                 case DM_INJECT_F2FS_BLOCK:
-                        if (__f2fs_corrupt_block(ic, blk, op, page, false))
+                        if (__f2fs_corrupt_block(ic, blk, op, page, true))
                                 return DM_INJECT_CORRUPT;
                         break;
 		case DM_INJECT_F2FS_DATA:

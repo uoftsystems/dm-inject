@@ -182,7 +182,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 						DMDEBUG("%s retval: %d sec: %lu", __func__, retval, sec);
 						bio_io_error(bio);
 
-                                                //return DM_MAPIO_KILL;
+						//return DM_MAPIO_KILL;
 						return DM_MAPIO_SUBMITTED;
 					}
 				}
