@@ -45,13 +45,13 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	return 0;
 }
 
-bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+int ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
 	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
 	return false;
 }
 
-bool ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+int ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
 	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
 	return false;

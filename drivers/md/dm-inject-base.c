@@ -173,14 +173,21 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 
                                 /*
                                  * In case of data corruption, re-map it as expected.
-                                 * Otherwise, check if the operation must be dropped.
+                                 * Otherwise, check if the operation must be dropped or errored.
                                  */
 				retval = ic->fs_t->data_to_dev(ic, bio, bvec, sec);
-				//DMDEBUG("%s retval: %d sec: %lu", __func__, retval, sec);
-				if (!retval) {
+				if (retval)
+					DMDEBUG("%s CORRUPTED sec %lu (W)", __func__, sec);
+				else {
 					if ((retval = ic->fs_t->block_to_dev(ic, bio, bvec, sec))) {
-						DMDEBUG("%s retval: %d sec: %lu", __func__, retval, sec);
-						bio_io_error(bio);
+						if (retval == DM_INJECT_ERROR) {
+							DMDEBUG("%s ERRORED sec %lu (W)", __func__, sec);
+							bio_io_error(bio);
+						} else if (retval == DM_INJECT_DROPPED) {
+							DMDEBUG("%s DROPPED sec %lu (W)", __func__, sec);
+							bio_endio(bio);
+						} else
+							DMDEBUG("%s SHORN sec %lu (W)", __func__, sec);
 
 						//return DM_MAPIO_KILL;
 						return DM_MAPIO_SUBMITTED;
@@ -202,29 +209,6 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	}
 
 	return ret;
-}
-
-//simulate SSD errors
-static int ssd_corrupt_from_dev(struct inject_c *ic, struct bio_vec *bvec, sector_t sec)
-{
-	struct page *page = bvec->bv_page;
-	struct inject_rec *tmp;
-	list_for_each_entry(tmp, &ic->inject_list, list) {
-		if(tmp->sector_num == sec) {
-			//zero out whole page
-			if(tmp->type == DM_INJECT_DROPPED) {
-				memset(page_address(page), 0, PAGE_SIZE);
-				return DM_INJECT_DROPPED;
-			}
-			//zero out 5/8 sectors of page
-			if(tmp->type == DM_INJECT_SHORN) {
-				int bytes_to_keep = PAGE_SIZE/8*3;
-				memset(page_address(page)+bytes_to_keep, 0, bytes_to_keep);
-				return DM_INJECT_SHORN;
-			}
-		}
-	}
-	return DM_INJECT_NONE;
 }
 
 static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
@@ -255,23 +239,23 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 				sector_t sec = bio->bi_iter.bi_sector +
                                         (iter >> SECTOR_SHIFT) - 8;
 
-				//Dropped and Shorn writes
-				//return zero block (or partial zero) for now
-				//but silent (no I/O error)
-				ret = ssd_corrupt_from_dev(ic, bvec, sec);
-				if(ret!=DM_INJECT_NONE) {
-					break;
-				}
 				/*
 				 * In case of data corruption, treat it as a regular I/O.
-				 * Otherwise, check if the operation must be dropped.
+				 * Otherwise, check if the operation must be errored.
 				 */
 				ret = ic->fs_t->data_from_dev(ic, bio, bvec, sec);
-				//DMDEBUG("%s ret: %d sec: %lu", __func__, ret, sec);
-				if (!ret && ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
-					DMDEBUG("%s error sec: %lu", __func__, sec);
-					*error = BLK_STS_IOERR;
-					break;
+				if (ret)
+					DMDEBUG("%s CORRUPTED sec %lu (R)", __func__, sec);
+				else {
+					if ((ret = ic->fs_t->block_from_dev(ic, bio, bvec, sec))) {
+						if (ret == DM_INJECT_ERROR) {
+							DMDEBUG("%s ERRORED sec %lu (R)", __func__, sec);
+							*error = BLK_STS_IOERR;
+						} else
+							DMDEBUG("%s SHORN sec %lu (R)", __func__, sec);
+
+						break;
+					}
 				}
 			}
 		}

@@ -36,6 +36,10 @@
 #define DM_INJECT_F2FS_DATA	0x0800
 #define DM_INJECT_F2FS_MAIN	(DM_INJECT_F2FS_NODE | DM_INJECT_F2FS_DATA)
 
+// Special SSD-related errors.
+#define DM_INJECT_F2FS_SHORN	0x1000
+#define DM_INJECT_F2FS_DROP	0x2000
+
 #define IS_F2FS(sb)		((sb) && ((sb)->s_magic == F2FS_SUPER_MAGIC))
 
 static struct inject_fs_type f2fs_fs;
@@ -155,12 +159,16 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	block_t tmp;
 	unsigned long long tmp_access;
 	char tmp_str[MEMBER_MAX_LENGTH + 1];
-	char spec[2 * MEMBER_MAX_LENGTH + 1];
+	char inode_spec[2 * MEMBER_MAX_LENGTH + 1];
+	char sit_spec[2 * MEMBER_MAX_LENGTH + 1];
 	char mode;
 	struct inject_rec *new_block;
 
 	/* Prepare the specification for parsing arguments related to inodes. */
-	sprintf(spec, "%%u:%%llu:%%%ds", MEMBER_MAX_LENGTH);
+	sprintf(inode_spec, "%%u:%%llu:%%%ds", MEMBER_MAX_LENGTH);
+
+	/* Prepare the specification for parsing arguments related to sit blocks. */
+	sprintf(sit_spec, "%%u:%%%ds", MEMBER_MAX_LENGTH);
 
 	// read sectors to corrupt
 	if (as->argc > 0) {
@@ -199,8 +207,29 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			new_op = REQ_OP_WRITE;
 		}
 
-		// meta blocks
-		if (!strncmp(cur_arg, "cp", 2)) {
+		// SSD-related errors.
+		if (!strncmp(cur_arg, "sw", 2)) {
+			cur_arg += 2;
+			new_type = DM_INJECT_F2FS_SHORN;
+
+			/* Interpose on all operations. */
+			new_op = -1;
+
+			if (sscanf(cur_arg, "%u:%llu", &tmp, &tmp_access) < 1) {
+				DMDEBUG("%s invalid shorn-write target: %s", __func__, cur_arg);
+				error = "Invalid shorn-write target";
+				return -1;
+			}
+		} else if (!strncmp(cur_arg, "dw", 2)) {
+			cur_arg += 2;
+			new_type = DM_INJECT_F2FS_DROP;
+
+			if (sscanf(cur_arg, "%u:%llu", &tmp, &tmp_access) < 1) {
+				DMDEBUG("%s invalid dropped-write target: %s", __func__, cur_arg);
+				error = "Invalid dropped-write target";
+				return -1;
+			}
+		} else if (!strncmp(cur_arg, "cp", 2)) { // Meta-blocks start here.
 			cur_arg += 2;
 			new_type = DM_INJECT_F2FS_CP;
 		} else if (!strncmp(cur_arg, "nat", 3)) {
@@ -226,10 +255,7 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
                         cur_arg += 3;
                         new_type = DM_INJECT_F2FS_SIT;
 
-			/* Prepare the specification for parsing arguments related to sit blocks. */
-			sprintf(spec, "%%u:%%%ds", MEMBER_MAX_LENGTH);
-
-                        ret = sscanf(cur_arg, spec, &tmp, tmp_str);
+                        ret = sscanf(cur_arg, sit_spec, &tmp, tmp_str);
                         if (!ret && corrupt_flag)
                                 DMINFO("%s Corruption is enabled, will corrupt "
                                        "all SIT blocks!", __func__);
@@ -262,7 +288,7 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 
 			// the number
 			if (new_type == DM_INJECT_F2FS_INODE &&
-				sscanf(cur_arg, spec, &tmp, &tmp_access, tmp_str) > 0) {
+				sscanf(cur_arg, inode_spec, &tmp, &tmp_access, tmp_str) > 0) {
 				// specific member inside inode
 				DMDEBUG("%s corrupt inode %u member %s access freq %llu",
                                         __func__, tmp, tmp_str, tmp_access);
@@ -354,7 +380,15 @@ int f2fs_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 
 		} else if (new_block->type == DM_INJECT_F2FS_DATA) {
 			new_block->block_num = tmp;
-			DMDEBUG("%s corrupt %s data of block %u off",
+			DMDEBUG("%s corrupt %s data of block %u",
+				__func__, RW(new_block->op), new_block->block_num);
+		} else if (new_block->type == DM_INJECT_F2FS_SHORN) {
+			new_block->block_num = tmp;
+			DMDEBUG("%s shorn writes %s of block %u",
+				__func__, RW(new_block->op), new_block->block_num);
+		} else if (new_block->type == DM_INJECT_F2FS_DROP) {
+			new_block->block_num = tmp;
+			DMDEBUG("%s drop writes %s of block %u",
 				__func__, RW(new_block->op), new_block->block_num);
 		}
 
@@ -961,12 +995,79 @@ int __f2fs_block_id(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec,
 	return DM_INJECT_NONE;
 }
 
-//associated with end_io function in DM injector module
+//associated with both map and end_io functions in DM injector module
+bool __f2fs_shorn_block_dev(struct inject_c *ic, struct bio_vec *bvec,
+				sector_t sec, int op)
+{
+	struct inject_rec *tmp;
+	block_t blk = SECTOR_TO_BLOCK(sec);
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == DM_INJECT_F2FS_SHORN && tmp->block_num == blk
+			&& (tmp->op < 0 || tmp->op == op)) {
+
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Sector: %lu, %s] Decreased access freq to: %llu",
+					__func__, sec, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				struct page *page = bvec->bv_page;
+				int bytes_to_keep = PAGE_SIZE / 8 * 3;
+
+				memset(page_address(page) + bytes_to_keep, 0, PAGE_SIZE - bytes_to_keep);
+				DMDEBUG("%s Shorn %s, blk %u, sec %lu",
+					__func__, RW(op), blk, sec);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+//associated with both map and end_io functions in DM injector module
+bool __f2fs_drop_block_dev(struct inject_c *ic, struct bio_vec *bvec,
+				sector_t sec, int op)
+{
+	struct inject_rec *tmp;
+	block_t blk = SECTOR_TO_BLOCK(sec);
+
+	list_for_each_entry(tmp, &ic->inject_list, list) {
+		if(tmp->type == DM_INJECT_F2FS_DROP && tmp->block_num == blk
+			&& (tmp->op < 0 || tmp->op == op)) {
+
+			/*
+			 * Decrease the access frequency counter only if it
+			 * is positive. Once it reaches zero, all subsequent
+			 * accesses will be corrupted.
+			 */
+			if (tmp->access_freq > 0) {
+				--tmp->access_freq;
+				DMDEBUG("%s [Sector: %lu, %s] Decreased access freq to: %llu",
+					__func__, sec, RW(op), tmp->access_freq);
+			}
+
+			if (!tmp->access_freq) {
+				DMDEBUG("%s Drop %s, blk %u, sec %lu",
+					__func__, RW(op), blk, sec);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+//associated with both map and end_io functions in DM injector module
 bool __f2fs_corrupt_block_dev(struct inject_c *ic, struct bio *bio,
 			      struct bio_vec *bvec, sector_t sec, int op)
 {
 	struct f2fs_context *fsc = (struct f2fs_context *) ic->context;
-
 	struct f2fs_sb_info *sbi = fsc->f2fs_sbi;
 	struct f2fs_super_block *super = F2FS_RAW_SUPER(sbi);
 	struct page *page = bvec->bv_page;
@@ -1117,10 +1218,10 @@ bool f2fs_can_corrupt(struct inject_c *ic)
 }
 
 //associated with map function in DM injector module
-bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio,
+int f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio,
 			       struct bio_vec *bvec, sector_t sec)
 {
-	if (!f2fs_can_corrupt(ic))
+	if (!ic || !f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
 	/*if (bio_multiple_segments(bio))
@@ -1133,16 +1234,23 @@ bool f2fs_corrupt_block_to_dev(struct inject_c *ic, struct bio *bio,
 	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
 		bvec->bv_len, bvec->bv_offset);
 	*/
+
+	if (__f2fs_shorn_block_dev(ic, bvec, sec, REQ_OP_WRITE))
+		return DM_INJECT_SHORN;
+
+	if (__f2fs_drop_block_dev(ic, bvec, sec, REQ_OP_WRITE))
+		return DM_INJECT_DROPPED;
+
 	if (__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_WRITE))
 		return DM_INJECT_ERROR;
 	return DM_INJECT_NONE;
 }
 
 //associated with end_io function in DM injector module
-bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio,
+int f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio,
 				 struct bio_vec *bvec, sector_t sec)
 {
-	if (!f2fs_can_corrupt(ic))
+	if (!ic || !f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
 	/*DMDEBUG("%s max %d", __func__, max((bio)->bi_iter.bi_size,
@@ -1150,6 +1258,10 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio,
 	DMDEBUG("%s bvec %p len %d off %d", __func__, bvec->bv_page,
 		bvec->bv_len, bvec->bv_offset);
 	*/
+
+	if (__f2fs_shorn_block_dev(ic, bvec, sec, REQ_OP_READ))
+		return DM_INJECT_SHORN;
+
 	if (__f2fs_corrupt_block_dev(ic, bio, bvec, sec, REQ_OP_READ))
 		return DM_INJECT_ERROR;
 	return DM_INJECT_NONE;
@@ -1158,10 +1270,17 @@ bool f2fs_corrupt_block_from_dev(struct inject_c *ic, struct bio *bio,
 int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 			struct bio_vec *bvec, sector_t sec, int op)
 {
-	struct page *page = bvec->bv_page;
+	struct page *page = bvec ? bvec->bv_page : NULL;
 	int block_type = __f2fs_block_id(ic, bio, bvec, sec, op);
 	block_t blk = SECTOR_TO_BLOCK(sec);
 	nid_t ino;
+
+	/* If the page cannot be found, return. */
+	if (!page) {
+		DMDEBUG("%s Page is NULL during %s for block %u",
+			__func__, RW(op), blk);
+		return DM_INJECT_NONE;
+	}
 
 	/*
 	 * In case global corruption mode is enabled, then try clearing the contents
@@ -1220,7 +1339,7 @@ int __f2fs_corrupt_data_dev(struct inject_c *ic, struct bio *bio,
 int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio,
 			     struct bio_vec *bvec, sector_t sec)
 {
-	if (!f2fs_can_corrupt(ic))
+	if (!ic || !f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
 	/*
@@ -1234,7 +1353,7 @@ int f2fs_corrupt_data_to_dev(struct inject_c *ic, struct bio *bio,
 int f2fs_corrupt_data_from_dev(struct inject_c *ic, struct bio *bio,
 			       struct bio_vec *bvec, sector_t sec)
 {
-	if (!f2fs_can_corrupt(ic))
+	if (!ic || !f2fs_can_corrupt(ic))
 		return DM_INJECT_NONE;
 
 	/*
