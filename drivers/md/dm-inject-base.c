@@ -186,9 +186,10 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 						} else if (retval == DM_INJECT_DROPPED) {
 							DMDEBUG("%s DROPPED sec %lu (W)", __func__, sec);
 							bio_endio(bio);
-						} else
+						} else {
 							DMDEBUG("%s SHORN sec %lu (W)", __func__, sec);
-
+							break;
+						}
 						//return DM_MAPIO_KILL;
 						return DM_MAPIO_SUBMITTED;
 					}
@@ -205,10 +206,10 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	if (bio_sectors(bio)) {
 		bio->bi_iter.bi_sector += ic->start;
 		bio->bi_iter.bi_sector -= ti->begin;
-		ret = DM_MAPIO_REMAPPED;
 	}
 
-	return ret;
+	//dump_stack();
+	return DM_MAPIO_REMAPPED;
 }
 
 static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
