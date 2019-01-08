@@ -139,7 +139,7 @@ static void inject_dtr(struct dm_target *ti)
 static int inject_map(struct dm_target *ti, struct bio *bio)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	int ret = DM_MAPIO_SUBMITTED, retval;
+	int ret;
 	struct bio_vec *bvec;
 	unsigned int iter;
 
@@ -175,15 +175,15 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
                                  * In case of data corruption, re-map it as expected.
                                  * Otherwise, check if the operation must be dropped or errored.
                                  */
-				retval = ic->fs_t->data_to_dev(ic, bio, bvec, sec);
-				if (retval)
+				ret = ic->fs_t->data_to_dev(ic, bio, bvec, sec);
+				if (ret)
 					DMDEBUG("%s CORRUPTED sec %lu (W)", __func__, sec);
 				else {
-					if ((retval = ic->fs_t->block_to_dev(ic, bio, bvec, sec))) {
-						if (retval == DM_INJECT_ERROR) {
+					if ((ret = ic->fs_t->block_to_dev(ic, bio, bvec, sec))) {
+						if (ret == DM_INJECT_ERROR) {
 							DMDEBUG("%s ERRORED sec %lu (W)", __func__, sec);
 							bio_io_error(bio);
-						} else if (retval == DM_INJECT_DROPPED) {
+						} else if (ret == DM_INJECT_DROPPED) {
 							DMDEBUG("%s DROPPED sec %lu (W)", __func__, sec);
 							bio_endio(bio);
 						} else {
