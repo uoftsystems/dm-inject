@@ -265,7 +265,8 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 	return DM_ENDIO_DONE;
 }
 
-static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
+static int inject_message(struct dm_target *ti, unsigned argc, char **argv,
+				char *result, unsigned maxlen)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
 
