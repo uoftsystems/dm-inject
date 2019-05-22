@@ -54,6 +54,7 @@ obj-$(CONFIG_DM_INJECT)		+= dm-inject.o
 obj-$(CONFIG_DM_INJECT)		+= dm-inject-f2fs.o
 obj-$(CONFIG_DM_INJECT)		+= dm-inject-ext4.o
 obj-$(CONFIG_DM_INJECT)		+= dm-btrfs.o
+obj-$(CONFIG_DM_INJECT)		+= dm-inject-io.o
 obj-$(CONFIG_DM_MULTIPATH)	+= dm-multipath.o dm-round-robin.o
 obj-$(CONFIG_DM_MULTIPATH_QL)	+= dm-queue-length.o
 obj-$(CONFIG_DM_MULTIPATH_ST)	+= dm-service-time.o
