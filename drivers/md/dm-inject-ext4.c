@@ -5,7 +5,6 @@
 
 #include "dm-inject.h"
 #include "../../fs/ext4/ext4.h"
-#include "../../include/linux/completion.h"
 
 #define DM_MSG_PREFIX ""
 #define IS_EXT4(sb) ((sb) && ((sb)->s_magic == EXT4_SUPER_MAGIC))
@@ -82,6 +81,7 @@ void initSB(struct inject_c *ic)
 
 	sz = bio_add_page(bgt_bio, bgt_bio_page, PAGE_SIZE, 0);
 
+
 	if(sz < PAGE_SIZE) {
 		DMDEBUG("%s failed bio_add_page size allocated = %d",__func__, len);
 		bio_put(bgt_bio);
@@ -95,7 +95,6 @@ void initSB(struct inject_c *ic)
 	bg_page_addr = (unsigned char*)page_address(bgt_bio->bi_io_vec->bv_page);
 	if(bg_page_addr == NULL){
 		DMDEBUG("bg_page_addr assigned null");
-		bio_put(bgt_bio);
 		return;
 	}else {
 		DMDEBUG("bg_page_addr is not null");
@@ -105,9 +104,7 @@ void initSB(struct inject_c *ic)
 		fsc->numGroups = (blocks_count + blocks_per_group - 1) / blocks_per_group;
 		fsc->initSuper = true;
 		DMDEBUG("num of groups = %d fsc->s_log_groups_per_flex = %d fsc->s_desc_size = %d", fsc->numGroups, fsc->sb.s_log_groups_per_flex, fsc->sb.s_desc_size);
-		DMDEBUG("%s():s_inode_size = %d",__func__, fsc->sb.s_inode_size);
 	}
-	bio_put(bgt_bio);
 	return;
 }
 
@@ -180,7 +177,6 @@ void initGDT(struct inject_c *ic, sector_t off)
 		fsc->gdt[i*2+1].bg_inode_bitmap_bno = tmp_blk_group.bg_inode_bitmap_hi;
 		fsc->gdt[i*2+1].bg_inode_table_bno = tmp_blk_group.bg_inode_table_hi;
 	}
-	bio_put(bgt_bio);
 	return;
 }
 
@@ -276,12 +272,8 @@ bool hasOffset(int new_type)
 bool hasField(int new_type)
 {
 	return (new_type & ( DM_INJECT_EXT4_SB | DM_INJECT_EXT4_INODE 
-	| DM_INJECT_EXT4_JOURNAL | DM_INJECT_EXT4_EXTENDED_ATTRIBUTES) );
-}
-
-bool has2Fields(int new_type)
-{
-	return (new_type & ( DM_INJECT_EXT4_DIRECTORY ));
+	| DM_INJECT_EXT4_JOURNAL | DM_INJECT_EXT4_DIRECTORY |
+	DM_INJECT_EXT4_EXTENDED_ATTRIBUTES) );
 }
 
 bool hasOffsetAndField(int new_type)
@@ -302,7 +294,7 @@ bool hasOffsetAndField(int new_type)
 	 - idmap[offset]	indirect block (probably not required for EXT4, writing here for backward compatibility)
 	 - etbX[offset] 	extent table block
 	 - **jX[field]		journal block
-	 - dir[field][field]	directory block 
+	 - dirX[field]		directory block 
 	 - exattrX[field]	extended attributes
 
 	where offset is a numerical value
@@ -315,7 +307,6 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 	char *cur_arg;
 	long long unsigned number;
 	char field[256] = {'\0'};
-	char path[256] = {'\0'};
 	struct inject_rec *new_block;
 	int size = 0;
 
@@ -344,19 +335,23 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			new_type = DM_INJECT_EXT4_DATA_BITMAP;
 		} else if( isTypeStr(&cur_arg,"ibmap")) {
 			new_type = DM_INJECT_EXT4_INODE_BITMAP;
-		} else if(isTypeStr(&cur_arg,"idmap")) {
+		} /*else if( isTypeStr(&cur_arg,"itable")) { 
+			new_type = DM_INJECT_EXT4_INODE_TABLE;
+		}*/ else if(isTypeStr(&cur_arg,"idmap")) {
 			new_type = DM_INJECT_EXT4_INDIRECT_DATA_MAP;
 		} else if(isTypeStr(&cur_arg,"etb")) { 
 			new_type = DM_INJECT_EXT4_EXTENT_TABLE;
 		} else if(isTypeStr(&cur_arg,"dir")) {
-			new_type = DM_INJECT_EXT4_DIRECTORY;
+			new_type = DM_INJECT_EXT4_DIRECTORY; 
 		} else if(isTypeStr(&cur_arg,"exattr")) {
 		 	new_type = DM_INJECT_EXT4_EXTENDED_ATTRIBUTES;
 		} else if(isTypeChar(&cur_arg,'j')) { 	
 			new_type = DM_INJECT_EXT4_JOURNAL; 
 		} else if (isTypeChar(&cur_arg,'b')) { 
+			DMINFO("setting up block type corruption\n");
 			new_type = DM_INJECT_EXT4_BLOCK;
 		} else if(isTypeChar(&cur_arg,'i')) {
+			DMINFO("setting up inode type corruption\n");
 			new_type =  DM_INJECT_EXT4_INODE;
 		} else {
 			DMDEBUG("%s():unidentified parameter %s\n",__func__, cur_arg);
@@ -370,15 +365,6 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 			field[strlen(field) - 1] = '\0';
 		} else if(hasOffsetAndField(new_type)) {
 			sscanf(cur_arg, "%llu[%d][%s]%*c",&number, &offset,field);
-		} else if(has2Fields(new_type)) {
-			cur_arg++;
-			sscanf(cur_arg, "%s",path);
-			DMDEBUG("got path = %s", path);
-			cur_arg+=(strlen(path) + 1);
-			sscanf(cur_arg,"%s", field);
-			DMDEBUG("got field = %s", field);
-			cur_arg+=(strlen(field) + 1);
-			i+=2;
 		}
 
 		// parameter extraction complete. initialize injector 
@@ -394,17 +380,9 @@ int ext4_parse_args(struct inject_c *ic, struct dm_arg_set *as, char *error)
 		}else{
 			new_block->field[0] = '\0';
 		}
-
-		if(strlen(path) > 2){
-			path[strlen(path)] = '\0';
-			strcpy(new_block->path, path);
-		}else{
-			new_block->path[0] = '\0';
-		}
-
 		new_block->offset = offset;
 
-		DMDEBUG("%s(): parameters => op = %d type = %d number = %llu field = %s path = %s offset = %d size = %d\n", __func__, new_op, new_type, number,  field, path , offset, size);
+		DMDEBUG("%s(): parameters => op = %d type = %d number = %llu field = %s offset = %d size = %d\n", __func__, new_op, new_type, number,  field, offset, size);
 
 		list_add_tail(&new_block->list, &ic->inject_list);
 	}
@@ -418,8 +396,8 @@ void corrupt_bio(struct bio *bio, int offset, int size)
 	unsigned int iter;
         char *data;
 
-        DMDEBUG("%s() corrupting bio %lu",__func__, (bio->bi_iter.bi_sector / 8) -1 );
-	DMDEBUG("%s(): offset = %d size = %d",__func__, offset, size);
+        DMINFO("%s() corrupting bio %lu",__func__, (bio->bi_iter.bi_sector / 8) -1 );
+	DMINFO("%s(): offset = %d size = %d",__func__, offset, size);
 
         for_each_bvec_no_advance(iter, bvec, bio, 0) {
 		DMDEBUG("length (probably segment length) = %d", bvec->bv_len);
@@ -622,7 +600,7 @@ void processSB(struct ext4_context *fsc, sector_t bnum, char *page_addr, struct 
 	// sb1[s_free_inodes_count]
 	DMDEBUG("%s():XXXX number = %lu, field = %s, offset = %d\n",__func__, number, field, offset);	
 	if(number == getSBNumber(bnum,isSparse, fsc->sb.s_blocks_per_group)) {
-		DMDEBUG("%s():corrupting block %lu which is the %lu'th block\n",__func__,bnum, number);
+		DMINFO("%s():corrupting block %lu which is the %lu'th block\n",__func__,bnum, number);
 		// use offset + 1024 only for block 0.
 		if(number == 1)
 			corrupt_bio(bio, offset + 1024, size);
@@ -809,6 +787,8 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 	struct ext4_inode my_inode;
 	int size_of_field, offset_of_field;
 
+	DMINFO("%s(): here\n",__func__);
+
 	if(fsc->gdt == NULL) {
 		DMDEBUG("%s(): Group Descriptor Fields Uninitialized,\
 			returning", __func__);
@@ -855,143 +835,6 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 	return;
 }
 
-struct bio* read_block(sector_t bno, struct bio *bio, struct page *bio_page, struct inject_c *ic)
-{
-	int sz, ret;
-
-	DMDEBUG("%s(): reading sector %lu",__func__,bno * 8);
-	bio_page = alloc_page(GFP_NOIO);
-	if(bio_page == NULL){
-		DMDEBUG("bgt_bio_page is null");
-	}
-
-	bio = bio_alloc(GFP_NOIO, 1);
-
-	if(bio == NULL) {
-		DMDEBUG("bgt_bio is null");
-	}
-
-	bio_set_dev(bio, ic->dev->bdev);
-	bio->bi_iter.bi_sector = (bno * 8);
-	bio->bi_end_io = NULL;//end_bio_bh_io_sync;
-	bio->bi_private = NULL;
-
-	sz = bio_add_page(bio, bio_page, PAGE_SIZE, 0);
-
-	if(sz < PAGE_SIZE) {
-		DMDEBUG("%s failed bio_add_page size allocated = %d",__func__, sz);
-		bio_put(bio);
-		return NULL;
-	}
-
-	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META | REQ_PRIO | REQ_NOWAIT);
-
-	submit_bio(bio);
-	return bio;
-}
-
-void processDirectory(struct ext4_context *fsc, sector_t bnum, char *page_addr, 
-	struct inject_rec *ext4_ic, struct bio *bio1, struct inject_c *ic) {
-
-	struct bio *bio = NULL;
-	struct page *bio_page = NULL;
-	char * bg_page_addr;
-	int i;
-	int sz, ret;
-
-	struct ext4_inode root_inode;
-	char path[256], field[256];
-
-	//XXX
-	if(bnum != 121)
-		return;
-
-	if(strlen(ext4_ic->field) > 0) {
-		strcpy(field, ext4_ic->field);
-	} else {
-		field[0] = '\0';
-	}
-	if(strlen(ext4_ic->path) > 0) {
-		strcpy(path, ext4_ic->path);
-	} else {
-		path[0] = '\0';
-	}
-
-	DMDEBUG("%s(): received path %s and field %s", __func__, path, field);
-
-	// get path. first find root dir inode.
-	// read second inodes structure
-
-	DMDEBUG("%s(): reading from block %d", __func__, fsc->gdt[0].bg_inode_table_bno);
-//	root_inode_bio = read_block(fsc->gdt[0].bg_inode_table_bno,root_inode_bio, root_inode_bio_page, ic);
-
-
-	DMDEBUG("%s(): reading sector %lu",__func__,fsc->gdt[0].bg_inode_table_bno * 8);
-	bio_page = alloc_page(GFP_NOIO);
-	if(bio_page == NULL){
-		DMDEBUG("bgt_bio_page is null");
-	}
-	bio = bio_alloc(GFP_NOIO, 1);
-
-	if(bio == NULL) {
-		DMDEBUG("bgt_bio is null");
-	}
-
-	sector_t bno = fsc->gdt[0].bg_inode_table_bno;
-
-	bio_set_dev(bio, ic->dev->bdev);
-	bio->bi_iter.bi_sector = (bno * 8);
-	bio->bi_end_io = NULL;//end_bio_bh_io_sync;
-	bio->bi_private = NULL;
-
-	sz = bio_add_page(bio, bio_page, PAGE_SIZE, 0);
-
-	if(sz < PAGE_SIZE) {
-		DMDEBUG("%s failed bio_add_page size allocated = %d",__func__, sz);
-		bio_put(bio);
-		return NULL;
-	}
-
-	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META | REQ_PRIO | REQ_NOWAIT);
-
-	// TODO bug here!! resolve submit_bio_wait
-	submit_bio(bio);
-
-
-	
-
-//	struct buffer_head *bh = read_block(fsc->gdt[0].bg_inode_table_bno,root_inode_bio,
-//					root_inode_bio_page, ic);
-
-	if(bio == NULL) {
-		DMDEBUG("%s():unable to read block number %lu",__func__,fsc->gdt[0].bg_inode_table_bno);
-		return;
-	}else {
-		DMDEBUG("%s():page read done!",__func__);
-//		bio_put(bio);
-		bg_page_addr = (unsigned char*)page_address(bio->bi_io_vec->bv_page);
-	}
-////	
-//	// copy second inode, which is the root directory of ext4 file system
-//
-	for(i = 0; i < 10 ; i++) {
-		memcpy(&root_inode, bg_page_addr + (fsc->sb.s_inode_size * i), sizeof(struct ext4_inode));
-		printk(KERN_CRIT "i_links_count = %d i_blocks_lo = %zd\n",\
-				root_inode.i_links_count, root_inode.i_blocks_lo);
-//		if(S_ISDIR(root_inode.i_mode))
-//			DMDEBUG("inode of type DIR found ");
-//		else
-//			DMDEBUG("inode not of type DIR");
-	}	
-
-	// tokenize path. get next dir
-	// go through each dir structure inside the block. read name of the block
-	// if match not found till end of block return
-	// if match found, read field
-	// corrupt field.
-	// end
-}
-
 bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {	
 	sector_t bnum = sec / 8;
@@ -1022,10 +865,6 @@ bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *b
 		}
 		if(tmp->type == DM_INJECT_EXT4_INODE_BITMAP) {
 			processIBMap(fsc,bnum,my_page_addr,tmp,bio,ic);	
-		}
-		if(tmp->type == DM_INJECT_EXT4_DIRECTORY) {
-			DMDEBUG("%s(): PROCESS DIR",__func__);
-			//processDirectory(fsc,bnum,my_page_addr,tmp,bio,ic);
 		}
 	}
 	return false;
