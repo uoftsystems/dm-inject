@@ -3,34 +3,36 @@
  * template for ext4
  */
 
+
 #include "dm-inject.h"
 #include "../../fs/ext4/ext4.h"
 
-#define DM_MSG_PREFIX ""
+#define DM_MSG_PREFIX "inject ext4"
+
 #define IS_EXT4(sb) ((sb) && ((sb)->s_magic == EXT4_SUPER_MAGIC))
 
 //EXT4 Specific Structures
-#define DM_INJECT_EXT4_SB			0x0001
-#define DM_INJECT_EXT4_BG			0x0002
-#define DM_INJECT_EXT4_DATA_BITMAP		0x0004
-#define DM_INJECT_EXT4_INODE_BITMAP		0x0008
-#define DM_INJECT_EXT4_INDIRECT_DATA_MAP	0x0020
-#define	DM_INJECT_EXT4_EXTENT_TABLE		0x0040
-#define	DM_INJECT_EXT4_JOURNAL			0x0080
-#define	DM_INJECT_EXT4_EXTENDED_ATTRIBUTES	0x0100
+#define DM_INJECT_EXT4_SB                     0x0001
+#define DM_INJECT_EXT4_BG                     0x0002
+#define DM_INJECT_EXT4_DATA_BITMAP            0x0004
+#define DM_INJECT_EXT4_INODE_BITMAP           0x0008
+#define DM_INJECT_EXT4_INDIRECT_DATA_MAP      0x0020
+#define       DM_INJECT_EXT4_EXTENT_TABLE             0x0040
+#define       DM_INJECT_EXT4_JOURNAL                  0x0080
+#define       DM_INJECT_EXT4_EXTENDED_ATTRIBUTES      0x0100
 //Common FileSystem Structures
-#define DM_INJECT_EXT4_INODE			0x0200
-#define DM_INJECT_EXT4_DIRECTORY		0x0400
-#define DM_INJECT_EXT4_BLOCK			0x0800
+#define DM_INJECT_EXT4_INODE                  0x0200
+#define DM_INJECT_EXT4_DIRECTORY              0x0400
+#define DM_INJECT_EXT4_BLOCK                  0x0800
 
 struct my_ext4_bg_info {
 	int bg_block_bitmap_bno;
 	int bg_inode_bitmap_bno;
-	int bg_inode_table_bno; 	
+	int bg_inode_table_bno;
 };
 
 struct ext4_context {
-	struct ext4_super_block sb;	
+	struct ext4_super_block sb;
 	struct my_ext4_bg_info *gdt;
 	bool initSuper;
 	int dummy;
@@ -183,47 +185,21 @@ void initGDT(struct inject_c *ic, sector_t off)
 int ext4_inject_ctr(struct inject_c *ic)
 {
 	struct ext4_context *fsc;
-	int blocks_per_group;
-
 	fsc = kmalloc(sizeof(*fsc), GFP_KERNEL);
 	if(!fsc) {
 		DMERR("%s failed", __func__);
 		return -ENOMEM;
 	}
-
 	ic->context = fsc;
-	fsc->initSuper = false;
-	initSB(ic);
-
-	if(fsc->initSuper == false){
-		DMDEBUG("unable to initialize Super, returning");
-		return 0;
-	}
-
-	if(fsc->numGroups == 0){
-		DMDEBUG("unable to read number of Groups, returning");
-		return 0;
-	}
-
-	blocks_per_group = fsc->sb.s_blocks_per_group;
-	initGDT(ic, (blocks_per_group + 1) * 8);
-
 	DMDEBUG("%s", __func__);
 	return 0;
 }
 
 void ext4_inject_dtr(struct inject_c *ic)
 {
-	struct ext4_context *fsc;
-	if(ic == NULL)
-		return;
-	fsc = (struct ext4_context *) ic->context;
-	if(fsc != NULL) {
-		if(fsc->gdt != NULL) {
-			kfree(fsc->gdt);
-		}
+	struct ext4_context *fsc = (struct ext4_context *) ic->context;
+	if(fsc)
 		kfree(fsc);
-	}
 	DMDEBUG("%s", __func__);
 	return;
 }
@@ -835,7 +811,7 @@ void processInode(struct ext4_context *fsc, sector_t bnum, char *page_addr,
 	return;
 }
 
-bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+int ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {	
 	sector_t bnum = sec / 8;
 	struct ext4_context *fsc;
@@ -870,21 +846,21 @@ bool ext4_block_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *b
 	return false;
 }
 
-bool ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
+int ext4_block_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-//	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
+	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
 	return false;
 }
 
 int ext4_data_from_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-//	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
+	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
 	return DM_INJECT_NONE;
 }
 
 int ext4_data_to_dev(struct inject_c *ic, struct bio *bio, struct bio_vec *bvec, sector_t sec)
 {
-//	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
+	DMDEBUG("%s %s sec %lu", __func__, RW(bio_op(bio)), sec);
 	return DM_INJECT_NONE;
 }
 
@@ -898,7 +874,6 @@ static struct inject_fs_type ext4_fs = {
 	.block_to_dev = ext4_block_to_dev,
 	.data_from_dev = ext4_data_from_dev,
 	.data_to_dev = ext4_data_to_dev,
-	
 };
 
 static int __init dm_inject_ext4_init(void)
@@ -915,3 +890,7 @@ static void __exit dm_inject_ext4_exit(void)
 
 module_init(dm_inject_ext4_init)
 module_exit(dm_inject_ext4_exit)
+
+MODULE_AUTHOR("Syslab <syslab.cs.toronto.edu>");
+MODULE_DESCRIPTION(DM_NAME " ext4 error injection target");
+MODULE_LICENSE("GPL");

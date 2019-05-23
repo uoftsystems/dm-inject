@@ -660,6 +660,52 @@ TRACE_EVENT(f2fs_dirty_sit_entry,
 		__entry->valid_blocks,
 		show_data_type(__entry->type))
 );
+
+TRACE_EVENT(f2fs_commit_super_start,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, bool recover),
+
+	TP_ARGS(sbi, recover),
+
+	TP_STRUCT__entry(
+		__field(dev_t,  dev)
+		__field(bool,	recover)
+	),
+
+	TP_fast_assign(
+		__entry->dev    	= sbi->sb->s_dev;
+		__entry->recover	= recover;
+	),
+
+	TP_printk("dev = (%d,%d), rec_flag: %d",
+		show_dev(__entry->dev),
+		__entry->recover)
+);
+
+TRACE_EVENT(f2fs_commit_super_end,
+
+	TP_PROTO(struct f2fs_sb_info *sbi, bool recover, int err),
+
+	TP_ARGS(sbi, recover, err),
+
+	TP_STRUCT__entry(
+		__field(dev_t,  dev)
+		__field(bool,	recover)
+		__field(int,	err)
+	),
+
+	TP_fast_assign(
+		__entry->dev    	= sbi->sb->s_dev;
+		__entry->recover	= recover;
+		__entry->err		= err;
+	),
+
+	TP_printk("dev = (%d,%d), rec_flag: %d err: %d",
+		show_dev(__entry->dev),
+		__entry->recover,
+		__entry->err)
+);
+
 // ---------------------------------------------------------------------------------------- //
 
 DEFINE_EVENT(f2fs__inode, f2fs_iget,
@@ -1151,7 +1197,30 @@ TRACE_EVENT(f2fs_lookup_start,
 	TP_printk("dev = (%d,%d), pino = %lu, name:%s, flags:%u",
 		show_dev_ino(__entry),
 		__entry->name,
-		__entry->flags)
+		__entry->flags
+        )
+);
+
+TRACE_EVENT(f2fs_target_dentry,
+
+        TP_PROTO(unsigned long pos, int val),
+
+        TP_ARGS(pos, val),
+
+        TP_STRUCT__entry(
+                __field(unsigned long,  index)
+                __field(int,    value)
+        ),
+
+        TP_fast_assign(
+                __entry->index	= pos;
+                __entry->value	= val;
+        ),
+
+        TP_printk("index: %lu value: %d",
+                  __entry->index,
+                  __entry->value
+        )
 );
 
 TRACE_EVENT(f2fs_lookup_end,
@@ -1511,6 +1580,40 @@ TRACE_EVENT(f2fs_write_begin,
 		(unsigned long long)__entry->pos,
 		__entry->len,
 		__entry->flags)
+);
+
+TRACE_EVENT(f2fs_write_end_io,
+
+	TP_PROTO(struct bio *bio, int status),
+
+	TP_ARGS(bio, status),
+
+	TP_STRUCT__entry(
+                __field(dev_t,  target)
+                __field(int,    op)
+                __field(int,    op_flags)
+                __field(sector_t,       sector)
+                __field(unsigned int,   size)
+		__field(int,	status)
+        ),
+
+        TP_fast_assign(
+                __entry->target         = bio_dev(bio);
+                __entry->op             = bio_op(bio);
+                __entry->op_flags       = bio->bi_opf;
+                __entry->sector         = bio->bi_iter.bi_sector;
+                __entry->size           = bio->bi_iter.bi_size;
+		__entry->status		= status;
+        ),
+
+	TP_printk("dev = (%d,%d), rw = %s(%s), sector = %lld"
+                " blk_addr = 0x%llx, bsize = %u, status = %d",
+                show_dev(__entry->target),
+                show_bio_type(__entry->op, __entry->op_flags),
+                (unsigned long long)__entry->sector,
+                (unsigned long long)__entry->sector >> 3,
+                __entry->size,
+		__entry->status)
 );
 
 TRACE_EVENT(f2fs_write_end,

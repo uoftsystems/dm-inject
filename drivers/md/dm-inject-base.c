@@ -1,25 +1,28 @@
 /*
-
+ *
  * dm-inject device mapper target
  * referencing dm-linear, dm-zero etc
  */
 
 #include "dm-inject.h"
+
 #define DM_MSG_PREFIX "inject"
+
 static LIST_HEAD(_fs_list);
 static DEFINE_SPINLOCK(_fs_list_lock);
 
 // Constructor
 static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
+	int ret = 0;
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
 	//int tmp2 = -1;
-	char tmp_str[64];
+	char tmp_str[64], dummy;
 	struct dm_arg_set as;
 	const char *devname;
-	char dummy;
-	int i, ret = 0;
+	int i;
+	struct inject_fs_type *inject_fs_type;
 
 	as.argc = argc;
 	as.argv = argv;
@@ -53,205 +56,179 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	//see if fs type is specified.
 	//if not default to f2fs (TODO:remove f2fs)
-	if(as.argc > 0 && sscanf(*as.argv, "%s%*c", tmp_str) == 1
-		&& request_module("dm-inject-%s", tmp_str) == 0) {
+	if (as.argc > 0 && sscanf(*as.argv, "%s%c", tmp_str, &dummy) == 1
+		&& !request_module("dm-inject-%s", tmp_str)) {
 		DMDEBUG("as.argc = %d, as.argv = %s , tmp_str = %s\n", as.argc, *as.argv, tmp_str);
 		dm_shift_arg(&as);
-	} else if(request_module("dm-inject-f2fs") == 0) {
+	} else if (!request_module("dm-inject-f2fs")) {
 		strcpy(tmp_str, "f2fs");
 	} else {
-		DMDEBUG("unable to request module dm-inject-%s", tmp_str);
+		DMDEBUG("Unable to request module dm-inject-%s", tmp_str);
+		ti->error = "Unable to request module";
+		goto bad;
+	}
+	DMDEBUG("Requested module: dm-inject-%s", tmp_str);
+
+	if (list_empty(&_fs_list)) {
+		DMDEBUG("Unable to register the filesystem");
+		ti->error = "Unable to register the filesystem";
 		goto bad;
 	}
 
-	DMDEBUG("request module dm-inject-%s", tmp_str);
-
-	if(list_empty(&_fs_list)) {
-		DMDEBUG("unable to register any inject filesystem");
-		goto bad;
-	}
-
-	if(dm_find_inject_fs(tmp_str)!=NULL) {
-		DMDEBUG("found inject_fs_type %s, assign to inject_c", tmp_str);
-		ic->fs_t = dm_find_inject_fs(tmp_str);
+	inject_fs_type = dm_find_inject_fs(tmp_str);
+	if (inject_fs_type && try_module_get(inject_fs_type->module)) {
+		DMDEBUG("Found inject_fs_type %s, assign it to inject_c", tmp_str);
+		ic->fs_t = inject_fs_type;
 	} else {
-		DMDEBUG("no matching module for filesystem injection: %s", tmp_str);
+		DMDEBUG("No matching module for filesystem injection: %s", tmp_str);
+		ti->error = "No matching module for fileystem injection";
 		goto bad;
 	}
 
 	INIT_LIST_HEAD(&ic->inject_list);
-
 	ret = ic->fs_t->parse_args(ic, &as, ti->error);
+	if (ret) {
+		DMDEBUG("Could not parse the specified arguments!");
+		ti->error = "Could not parse the specified arguments!";
+		goto bad;
+	}
 
-	if(ret)
-		return ret;
-
-	// do this last since it impacts ref count
+	/* Do this last since it impacts ref count. */
 	ret = dm_get_device(ti, devname, dm_table_get_mode(ti->table), &ic->dev);
 	if (ret) {
+		DMDEBUG("Device lookup failed");
 		ti->error = "Device lookup failed";
 		goto bad;
 	}
 
 	ic->src_bdev = NULL;
 	ic->inject_enable = false; //injection disabled by default
+	ic->global_corrupt_enable = false; //global corruption disabled by default
 	ti->num_discard_bios = 1;
 	ti->private = ic;
 	ic->fs_t->ctr(ic);
 	return 0;
-	bad:
-		kfree(ic);
-		return ret;
+
+bad:
+	kfree(ic);
+	return ret;
 }
 
 // Destructor
 static void inject_dtr(struct dm_target *ti)
 {
-	struct inject_c *ic = (struct inject_c *) ti->private;
+	struct inject_c *ic;
 	struct inject_rec *tmp, *tmp2;
+
+	if (!ti)
+		return;
+
+	ic = (struct inject_c *) ti->private;
+	if (!ic)
+		return;
+
 	dm_put_device(ti, ic->dev);
 	ic->fs_t->dtr(ic);
+	module_put(ic->fs_t->module);
 	list_for_each_entry_safe(tmp, tmp2, &ic->inject_list, list) {
 		list_del(&tmp->list);
 		kfree(tmp);
 	}
 	kfree(ic);
+
+	/* Explicitly set the private member equal to NULL to avoid
+	 * double free operations. */
+	ti->private = NULL;
 }
-
-/*
-// check if a particular sector is in the list to corrupt
-static int check_corrupt_sector(struct inject_c *ic, sector_t s)
-{
-	int i;
-	if (ic->corrupt_sector == NULL){
-		DMDEBUG("%s NULL", __func__);
-		return 0;
-	}
-	for (i=0;i<ic->num_corrupt;i++) {
-		DMDEBUG("%s %d %d", __func__, i, ic->corrupt_sector[i]);
-		if(s == ic->corrupt_sector[i])
-			return 1;
-	}
-	return 0;
-}
-
-static int check_corrupt_block(struct inject_c *ic, u32 blk)
-{
-	int i;
-	//DMDEBUG("%s %d", __func__, blk);
-	if(ic->corrupt_block == NULL) {
-		//DMDEBUG("%s NULL", __func__);
-		return 0;
-	}
-	for (i=0;i<ic->num_corrupt;i++) {
-		//DMDEBUG("%s %d %d", __func__, i, ic->corrupt_block[i]);
-		if(blk == ic->corrupt_block[i])
-			return 1;
-	}
-	return 0;
-}*/
-
-//from f2fs/node.c get_node_info
-//without reading the disk
-
-/*
-static int f2fs_get_node_info(struct f2fs_sb_info *sbi, nid_t nid, struct node_info *ni)
-{
-	struct f2fs_nm_info *nm_i = NM_I(sbi);
-	struct curseg_info *curseg = CURSEG_I(sbi, CURSEG_HOT_DATA);
-	struct f2fs_journal *journal = curseg->journal;
-	struct f2fs_nat_entry ne;
-	struct nat_entry *e;
-	int i;
-
-	ni->nid = nid;
-
-	//chck nat cache
-	down_read(&nm_i->nat_tree_lock);
-	//e = __lookup_nat_cache(nm_i, nid);
-	if (e) {
-		ni->ino = nat_get_ino(e);
-		ni->blk_addr = nat_get_blkaddr(e)
-	}
-	
-	//check current segment summary
-	down_read(&curseg->journal_rwsem);
-	//i = lookup_journal_in_cursum(journal, NAT_JOURNAL, nid, 0);
-	if (i >= 0) {
-		ne = nat_in_journal(journal, i);
-		node_info_from_raw_nat(ni, &ne);
-	}
-	up_read(&curseg->journal_rwsem);
-	if (i >= 0)
-		goto found;
-
-found:
-	up_read(&nm_i->nat_tree_lock);
-}*/
 
 // Mapper
 static int inject_map(struct dm_target *ti, struct bio *bio)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	struct super_block *sb;
-	int ret = DM_MAPIO_SUBMITTED;
+	int ret;
 	struct bio_vec *bvec;
 	unsigned int iter;
 	sector_t sec;
 
-	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+	DMDEBUG("%s bio op %d sector %lu", __func__, bio_op(bio),
+		bio->bi_iter.bi_sector);
 
-	//drop read-ahead?
-//	if(bio->bi_opf & REQ_RAHEAD) {
-//		DMDEBUG("%s fail RAHEAD", __func__);
-//		return DM_MAPIO_KILL;
-//	}
+	// Drop read-ahead.
+	if (bio->bi_opf & REQ_RAHEAD) {
+		DMDEBUG("%s fail RAHEAD", __func__);
+		return DM_MAPIO_KILL;
+	}
+
 	//assign src_bdev to grab superblock if fs is mounted
 	//DMDEBUG("%s bio->bi_disk %p bd_super %p", __func__, bio->bi_disk, (bdget_disk(bio->bi_disk, 0))->bd_super);
-	if(bio->bi_disk != NULL) {
-		ic->src_bdev = bdget_disk(bio->bi_disk, 0);
-	}
 
-	//linear mapping
-	bio_set_dev(bio, ic->dev->bdev);
-	if(bio_sectors(bio)) {
-		bio->bi_iter.bi_sector += ic->start;
-		bio->bi_iter.bi_sector -= ti->begin;
-	}
 	//make the request SYNC to prevent merging?
 	//bio->bi_opf |= REQ_SYNC;
-	ret = DM_MAPIO_REMAPPED;
+	//ret = DM_MAPIO_REMAPPED;
 
 	//DMDEBUG("%s sb %p", __func__, sb);
 	//intercept and inject F2FS write requests
 	//data travelling from from memory to block device
-	if(ic->inject_enable)
-		if(bio_op(bio)==REQ_OP_WRITE) {
+	if (ic->inject_enable) {
+		if (bio_op(bio) == REQ_OP_WRITE) {
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
 				DMDEBUG("WRITE op %s blk %lu\n", RW(bio_op(bio)), bio->bi_iter.bi_sector / 8);
-				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
-				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
-				sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
-				if(ic->fs_t->data_to_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE)
-					ret = max(ret, DM_MAPIO_REMAPPED);
-				else if(ic->fs_t->block_to_dev(ic, bio, bvec, sec))
-					ret = max(ret, DM_MAPIO_KILL);
+				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)),
+				//		bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
+				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__,
+				//		bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
+				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
+
+                                /*
+                                 * In case of data corruption, re-map it as expected.
+                                 * Otherwise, check if the operation must be dropped or errored.
+                                 */
+				ret = ic->fs_t->data_to_dev(ic, bio, bvec, sec);
+				if (ret)
+					DMDEBUG("%s CORRUPTED sec %lu (W)", __func__, sec);
+				else {
+					if ((ret = ic->fs_t->block_to_dev(ic, bio, bvec, sec))) {
+						if (ret == DM_INJECT_ERROR) {
+							DMDEBUG("%s ERRORED sec %lu (W)", __func__, sec);
+							bio_io_error(bio);
+						} else if (ret == DM_INJECT_DROPPED) {
+							DMDEBUG("%s DROPPED sec %lu (W)", __func__, sec);
+							bio_endio(bio);
+						} else {
+							DMDEBUG("%s SHORN sec %lu (W)", __func__, sec);
+							break;
+						}
+						//return DM_MAPIO_KILL;
+						return DM_MAPIO_SUBMITTED;
+					}
+				}
 			}
 		}
+        }
 
-	if(ret==DM_MAPIO_SUBMITTED)
-		bio_endio(bio);
+	if (bio->bi_disk)
+		ic->src_bdev = bdget_disk(bio->bi_disk, 0);
+
+	//linear mapping
+	bio_set_dev(bio, ic->dev->bdev);
+	if (bio_sectors(bio)) {
+		bio->bi_iter.bi_sector += ic->start;
+		bio->bi_iter.bi_sector -= ti->begin;
+	}
+
 	//dump_stack();
-	return ret;
+	return DM_MAPIO_REMAPPED;
 }
 
 static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *error)
 {
 	struct inject_c *ic = (struct inject_c *) ti->private;
-	int ret = DM_ENDIO_DONE;
 	struct bio_vec *bvec;
 	unsigned int iter;
 	sector_t sec;
+	int ret;
+
+	/* Initially, no error has occurred. */
 	*error = BLK_STS_OK;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
@@ -260,50 +237,74 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 
 	//intercept and inject F2FS read requests
 	//data from block device travelling to memory
-	if(ic->inject_enable)
-		if(bio_op(bio)==REQ_OP_READ) {
+	if (ic->inject_enable) {
+		if (bio_op(bio) == REQ_OP_READ) {
+			//the sector count was advanced during the bio
+			//sector_t sec = bio->bi_iter.bi_sector - 8;
+
 			DMINFO("READ op %s blk %lu\n", RW(bio_op(bio)), sec / 8);
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
-			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
+			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size,
+			//		bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
-				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page, 
+				bio, bio->bi_io_vec, bio->bi_io_vec->bv_page,
 				bio->bi_io_vec->bv_len, bio->bi_io_vec->bv_offset);*/
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
-				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT) - 8;
-				if(ic->fs_t->data_from_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE) {
-					//we corrupted some data, can do accounting here
-					//but still pretend to be normal
-					// XXX Q. both error and ret have been initialized to values that they are being compared with. so, what are these statements for?
-					//*error = *error > BLK_STS_OK? *error : BLK_STS_OK;
-					*error = max(*error, BLK_STS_OK);
-					ret = max(ret, DM_ENDIO_DONE);
-				} else if(ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
-					// XXX Q. Same
-					*error = max(*error, BLK_STS_IOERR);
-					ret = max(ret, DM_ENDIO_DONE);
+				sector_t sec = bio->bi_iter.bi_sector +
+                                        (iter >> SECTOR_SHIFT) - 8;
+
+				/*
+				 * In case of data corruption, treat it as a regular I/O.
+				 * Otherwise, check if the operation must be errored.
+				 */
+				ret = ic->fs_t->data_from_dev(ic, bio, bvec, sec);
+				if (ret)
+					DMDEBUG("%s CORRUPTED sec %lu (R)", __func__, sec);
+				else {
+					if ((ret = ic->fs_t->block_from_dev(ic, bio, bvec, sec))) {
+						if (ret == DM_INJECT_ERROR) {
+							DMDEBUG("%s ERRORED sec %lu (R)", __func__, sec);
+							*error = BLK_STS_IOERR;
+						} else
+							DMDEBUG("%s SHORN sec %lu (R)", __func__, sec);
+
+						break;
+					}
 				}
 			}
 		}
-	return ret;
+	}
+
+	return DM_ENDIO_DONE;
 }
 
-static int inject_message(struct dm_target *ti, unsigned argc, char **argv, char *result, unsigned maxlen)
+static int inject_message(struct dm_target *ti, unsigned argc, char **argv,
+				char *result, unsigned maxlen)
 {
-	int r = -EINVAL;
 	struct inject_c *ic = (struct inject_c *) ti->private;
 
-	if(argc!=1) {
-		return r;
+	if (argc != 1) {
+		DMDEBUG("%s: Additional arguments provided!", __func__);
+		return -EINVAL;
 	}
-	if(strcasecmp(argv[0], "test")==0) {
-		DMDEBUG("%s test message", __func__);
-	} else if (strcasecmp(argv[0], "start")==0) {
-		DMDEBUG("%s enable injection", __func__);
+
+	if (!strcasecmp(argv[0], "test"))
+		DMDEBUG("%s: test message", __func__);
+	else if (!strcasecmp(argv[0], "start")) {
+		DMDEBUG("%s: enable injection", __func__);
 		ic->inject_enable = true;
-	} else if (strcasecmp(argv[0], "stop")==0) {
-		DMDEBUG("%s disable injection", __func__);
+	} else if (!strcasecmp(argv[0], "stop")) {
+		DMDEBUG("%s: disable injection", __func__);
 		ic->inject_enable = false;
-	}
+	} else if (!strcasecmp(argv[0], "corruption_on")) {
+		DMDEBUG("%s: enable global corruption", __func__);
+		ic->global_corrupt_enable = true;
+	} else if (!strcasecmp(argv[0], "corruption_off")) {
+		DMDEBUG("%s: disable global corruption", __func__);
+		ic->global_corrupt_enable = false;
+	} else
+		DMDEBUG("%s: unsupported operation: %s", __func__, argv[0]);
+
 	return 0;
 }
 
@@ -321,9 +322,11 @@ static struct target_type inject_target = {
 static int __init dm_inject_init(void)
 {
 	int r = dm_register_target(&inject_target);
-	if (r<0)
-		DMERR("dm_inject register failed %d", r);
-	DMDEBUG("dm-inject target registered");
+	if (r < 0)
+		DMERR("dm-inject register failed %d", r);
+	else
+		DMDEBUG("dm-inject target registered");
+
 	return r;
 }
 
@@ -338,6 +341,7 @@ int dm_register_inject_fs(struct inject_fs_type *fs)
 	spin_lock(&_fs_list_lock);
 	list_add_tail(&fs->list, &_fs_list);
 	spin_unlock(&_fs_list_lock);
+
 	DMDEBUG("registered %s", fs->name);
 	return 0;
 }
@@ -348,6 +352,7 @@ int dm_unregister_inject_fs(struct inject_fs_type *fs)
 	spin_lock(&_fs_list_lock);
 	list_del(&fs->list);
 	spin_unlock(&_fs_list_lock);
+
 	DMDEBUG("unregistered %s", fs->name);
 	return 0;
 }
@@ -356,12 +361,16 @@ EXPORT_SYMBOL(dm_unregister_inject_fs);
 struct inject_fs_type *dm_find_inject_fs(const char* name)
 {
 	struct inject_fs_type *tmp, *ret = NULL;
+
 	spin_lock(&_fs_list_lock);
 	list_for_each_entry(tmp, &_fs_list, list) {
-		if(strcmp(tmp->name, name)==0)
+		if (!strcmp(tmp->name, name)) {
 			ret = tmp;
+			break;
+		}
 	}
 	spin_unlock(&_fs_list_lock);
+
 	return ret;
 }
 EXPORT_SYMBOL(dm_find_inject_fs);
@@ -370,5 +379,6 @@ module_init(dm_inject_init)
 module_exit(dm_inject_exit)
 
 MODULE_AUTHOR("Andy Hwang <hwang@cs.toronto.edu>");
+MODULE_AUTHOR("Stathis Maneas <smaneas@cs.toronto.edu>");
 MODULE_DESCRIPTION(DM_NAME " error injection target");
 MODULE_LICENSE("GPL");

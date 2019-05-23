@@ -117,7 +117,13 @@ struct f2fs_dir_entry *find_target_dentry(struct fscrypt_name *fname,
 
 	if (max_slots)
 		*max_slots = 0;
+
+        trace_f2fs_target_dentry(bit_pos, d->max);
+
 	while (bit_pos < d->max) {
+                trace_f2fs_target_dentry(bit_pos,
+                                test_bit_le(bit_pos, d->bitmap) == 0);
+
 		if (!test_bit_le(bit_pos, d->bitmap)) {
 			bit_pos++;
 			max_len++;

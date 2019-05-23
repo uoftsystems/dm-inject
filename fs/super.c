@@ -853,6 +853,8 @@ int do_remount_sb(struct super_block *sb, int sb_flags, void *data, int force)
 #endif
 
 	remount_ro = (sb_flags & SB_RDONLY) && !sb_rdonly(sb);
+	if (remount_ro)
+		printk(KERN_INFO "VFS:Filesystem to be mounted as read-only ...\n");
 
 	if (remount_ro) {
 		if (!hlist_empty(&sb->s_pins)) {

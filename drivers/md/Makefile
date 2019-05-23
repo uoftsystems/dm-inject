@@ -22,7 +22,6 @@ dm-verity-y	+= dm-verity-target.o
 md-mod-y	+= md.o md-bitmap.o
 raid456-y	+= raid5.o raid5-cache.o raid5-ppl.o
 dm-zoned-y	+= dm-zoned-target.o dm-zoned-metadata.o dm-zoned-reclaim.o
-<<<<<<< HEAD
 linear-y	+= md-linear.o
 multipath-y	+= md-multipath.o
 faulty-y	+= md-faulty.o

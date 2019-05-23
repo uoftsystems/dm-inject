@@ -1442,8 +1442,12 @@ int write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 
 	/* unlock all the fs_lock[] in do_checkpoint() */
 	err = do_checkpoint(sbi, cpc);
-	if (err)
+	if (err) {
+		f2fs_msg(sbi->sb, KERN_NOTICE,
+			"Checkpoint version (%llx) exited with an error: %d",
+			ckpt_ver, err);
 		release_discard_addrs(sbi);
+	}
 	else
 		clear_prefree_segments(sbi, cpc);
 

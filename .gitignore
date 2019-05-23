@@ -42,6 +42,7 @@
 *.tab.[ch]
 *.tar
 *.xz
+*.log
 Module.symvers
 modules.builtin
 
@@ -132,3 +133,8 @@ all.config
 
 # Kdevelop4
 *.kdev4
+
+# Code Coverage
+*.gcov
+*.gcda
+f2fs.info

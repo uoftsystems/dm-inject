@@ -96,6 +96,8 @@ static void f2fs_write_end_io(struct bio *bio)
 		struct page *page = bvec->bv_page;
 		enum count_type type = WB_DATA_TYPE(page);
 
+		trace_f2fs_write_end_io(bio, bio->bi_status);
+
 		if (IS_DUMMY_WRITTEN_PAGE(page)) {
 			set_page_private(page, (unsigned long)NULL);
 			ClearPagePrivate(page);

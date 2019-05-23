@@ -202,8 +202,11 @@ static int do_read_inode(struct inode *inode)
 	}
 
 	node_page = get_node_page(sbi, inode->i_ino);
-	if (IS_ERR(node_page))
+	if (IS_ERR(node_page)) {
+		f2fs_msg(inode->i_sb, KERN_WARNING, "bad inode I/O: %lu",
+			(unsigned long) inode->i_ino);
 		return PTR_ERR(node_page);
+	}
 
 	ri = F2FS_INODE(node_page);
 
