@@ -14,7 +14,7 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct inject_c *ic;
 	unsigned long long tmp = 0;
-	int tmp2 = -1;
+	//int tmp2 = -1;
 	char tmp_str[64];
 	struct dm_arg_set as;
 	const char *devname;
@@ -48,10 +48,14 @@ static int inject_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	ic->start = tmp;
 
+	for(i = 0 ; i < as.argc ; i++)
+		DMDEBUG("ARG %d = %s\n", as.argc, as.argv[i]);
+
 	//see if fs type is specified.
 	//if not default to f2fs (TODO:remove f2fs)
 	if(as.argc > 0 && sscanf(*as.argv, "%s%*c", tmp_str) == 1
 		&& request_module("dm-inject-%s", tmp_str) == 0) {
+		DMDEBUG("as.argc = %d, as.argv = %s , tmp_str = %s\n", as.argc, *as.argv, tmp_str);
 		dm_shift_arg(&as);
 	} else if(request_module("dm-inject-f2fs") == 0) {
 		strcpy(tmp_str, "f2fs");
@@ -193,6 +197,7 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	int ret = DM_MAPIO_SUBMITTED;
 	struct bio_vec *bvec;
 	unsigned int iter;
+	sector_t sec;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 
@@ -223,9 +228,10 @@ static int inject_map(struct dm_target *ti, struct bio *bio)
 	if(ic->inject_enable)
 		if(bio_op(bio)==REQ_OP_WRITE) {
 			for_each_bvec_no_advance(iter, bvec, bio, 0) {
+				DMDEBUG("WRITE op %s blk %lu\n", RW(bio_op(bio)), bio->bi_iter.bi_sector / 8);
 				//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 				//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
-				sector_t sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
+				sec = bio->bi_iter.bi_sector + (iter >> SECTOR_SHIFT);
 				if(ic->fs_t->data_to_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE)
 					ret = max(ret, DM_MAPIO_REMAPPED);
 				else if(ic->fs_t->block_to_dev(ic, bio, bvec, sec))
@@ -245,16 +251,18 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 	int ret = DM_ENDIO_DONE;
 	struct bio_vec *bvec;
 	unsigned int iter;
+	sector_t sec;
 	*error = BLK_STS_OK;
 
 	//DMDEBUG("%s bio op %d sector %d blk %d vcnt %d", __func__, bio_op(bio), bio->bi_iter.bi_sector, SECTOR_TO_BLOCK(bio->bi_iter.bi_sector), bio->bi_vcnt);
 	//the sector count was advanced during the bio
-	sector_t sec = bio->bi_iter.bi_sector-8;
+	sec = bio->bi_iter.bi_sector-8;
 
 	//intercept and inject F2FS read requests
 	//data from block device travelling to memory
 	if(ic->inject_enable)
 		if(bio_op(bio)==REQ_OP_READ) {
+			DMINFO("READ op %s blk %lu\n", RW(bio_op(bio)), sec / 8);
 			//DMDEBUG("%s bio %s sector %d blk %d vcnt %d", __func__, RW(bio_op(bio)), sec, SECTOR_TO_BLOCK(sec), bio->bi_vcnt);
 			//DMDEBUG("%s sector %d bi_size %d bi_bvec_done %d bi_idx %d", __func__, bio->bi_iter.bi_sector, bio->bi_iter.bi_size, bio->bi_iter.bi_bvec_done, bio->bi_iter.bi_idx);
 			/*DMDEBUG("%s bio %p io_vec %p page %p len %d off %d", __func__,
@@ -265,9 +273,12 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 				if(ic->fs_t->data_from_dev(ic, bio, bvec, sec)!=DM_INJECT_NONE) {
 					//we corrupted some data, can do accounting here
 					//but still pretend to be normal
+					// XXX Q. both error and ret have been initialized to values that they are being compared with. so, what are these statements for?
+					//*error = *error > BLK_STS_OK? *error : BLK_STS_OK;
 					*error = max(*error, BLK_STS_OK);
 					ret = max(ret, DM_ENDIO_DONE);
 				} else if(ic->fs_t->block_from_dev(ic, bio, bvec, sec)) {
+					// XXX Q. Same
 					*error = max(*error, BLK_STS_IOERR);
 					ret = max(ret, DM_ENDIO_DONE);
 				}
@@ -276,7 +287,7 @@ static int inject_end_io(struct dm_target *ti, struct bio *bio, blk_status_t *er
 	return ret;
 }
 
-static int inject_message(struct dm_target *ti, unsigned argc, char **argv)
+static int inject_message(struct dm_target *ti, unsigned argc, char **argv, char *result, unsigned maxlen)
 {
 	int r = -EINVAL;
 	struct inject_c *ic = (struct inject_c *) ti->private;
